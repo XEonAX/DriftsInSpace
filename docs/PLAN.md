@@ -369,10 +369,12 @@ Driven by `ShipSkin` data:
 - Color tinted per skin `Color` field
 
 ### Obstacle Rendering
-- Each obstacle type maps to a sprite (sliced from a texture atlas)
+- Each obstacle type has a standalone PNG in `ANXRacers/Assets/Textures/` with a filename matching the type string exactly (e.g. `capsule100x300Rock.png`, `poly5Vert128ARock.png`). No atlas needed — load by name.
 - Position from level JSON `Transform.Position.{x,y}`
 - Rotation from `Transform.Rotation` quaternion → `2 * Math.atan2(q.z, q.w)` radians
-- Background rock/nebula field tiled behind obstacles
+- Background: `GameBackground.png` tiled behind obstacles
+- Collision spark: `CollisionSpark.png` particle burst on ship-obstacle hit
+- Space dust ambient: `SpaceDustParticle.png`
 
 ---
 
@@ -445,7 +447,8 @@ No blocking on ANXStudiosServer. All required assets (ships, one map) are bundle
 - [ ] Kinematic physics sim (50 Hz tick loop)
 - [ ] Keyboard input
 - [ ] One bundled map (Alpha-1 level JSON → obstacle rendering)
-- [ ] Circle vs capsule collision (most common obstacle type)
+- [ ] Circle vs capsule collision
+- [ ] Circle vs convex polygon collision (SAT, exact vertices from prefabs)
 - [ ] DriftsInSpaceGalaxy C# server (WebSocket, binary packets)
 - [ ] Multiplayer: join, broadcast states, remote player interpolation
 - [ ] Camera follow with velocity lookahead
@@ -454,7 +457,6 @@ No blocking on ANXStudiosServer. All required assets (ships, one map) are bundle
 ### Phase 2 — Full Controls + Polish
 - [ ] Gamepad support
 - [ ] Touch controls (virtual joystick)
-- [ ] Polygon obstacle collisions (poly5Vert, poly7Vert types)
 - [ ] Off-screen player indicators
 - [ ] Thruster audio (Howler.js engine loop, pitch driven by speed)
 - [ ] Collision SFX
@@ -472,19 +474,42 @@ No blocking on ANXStudiosServer. All required assets (ships, one map) are bundle
 
 ## Obstacle Geometry Lookup Table
 
-Needed for both collision and rendering. Maps `ObstacleType` string to collider shape:
+Collider data extracted directly from `ANXRacers/Assets/Prefabs/Obstacles/*.prefab` YAML.  
+Texture filenames map 1:1 to type strings — `{type}.png` in `ANXRacers/Assets/Textures/`.
 
-| Type Prefix | Collider | Approx Dimensions (units) |
-|---|---|---|
-| `capsule100x300Rock` | Capsule | radius=0.5, height=3.0 |
-| `capsule100x300Metal` | Capsule | radius=0.5, height=3.0 |
-| `poly5Vert128ARock` | ConvexPolygon 5 verts | ~1.28 units bounding |
-| `poly5Vert128BRock` | ConvexPolygon 5 verts | ~1.28 units (variant B shape) |
-| `poly7Vert128ARock` | ConvexPolygon 7 verts | ~1.28 units bounding |
+### Capsule obstacles (CapsuleCollider2D, vertical orientation)
 
-Exact vertex data must be extracted from Unity's prefabs (or approximated from the sprite bounds).  
-For Phase 1: treat all poly obstacles as circles with radius 0.64 (good enough for first pass).  
-For Phase 2: extract actual collider vertices from Unity using a one-time editor script.
+| Type | size.x (diameter) | size.y (total height) | Capsule radius | Segment half-length |
+|---|---|---|---|---|
+| `capsule100x300Rock` | 1.0 | 3.0 | 0.5 | 1.0 |
+| `capsule100x300Metal` | 1.0 | 3.0 | 0.5 | 1.0 |
+| `capsule100x200Rock` | 1.0 | 2.0 | 0.5 | 0.5 |
+| `capsule100x200Metal` | 1.0 | 2.0 | 0.5 | 0.5 |
+
+Capsule circle-vs-capsule test: find closest point on segment `(0, -halfLen)→(0, +halfLen)`, check distance ≤ `shipRadius + capsuleRadius`.
+
+### Polygon obstacles (PolygonCollider2D — exact vertices from prefab)
+
+**`poly5Vert128ARock`**
+```
+[(-0.140,  0.620), (-0.640,  0.130), ( 0.035, -0.620),
+ ( 0.485, -0.470), ( 0.635,  0.310)]
+```
+
+**`poly5Vert128BRock`**
+```
+[( 0.035,  0.530), (-0.520,  0.460), (-0.575, -0.170),
+ ( 0.225, -0.530), ( 0.575,  0.020)]
+```
+
+**`poly7Vert128ARock`**
+```
+[( 0.280,  0.460), (-0.280,  0.460), (-0.535, -0.020),
+ (-0.280, -0.460), ( 0.290, -0.460), ( 0.285, -0.130),
+ ( 0.535,  0.020)]
+```
+
+Polygon circle-vs-convex test: SAT — for each edge, project circle center onto edge normal; collision if penetration depth < shipRadius on all axes.
 
 ---
 
@@ -509,6 +534,21 @@ done
 # One starter map
 cp $ANXTRACERS/levels/000000a0-0e7e-4003-9913-4aedc38e1ba5.json \
    $DEST/levels/alpha-1.json
+
+# Obstacle textures (filenames match level JSON type strings exactly)
+cp $ANXTRACERS/../Textures/capsule100x300Rock.png   $DEST/textures/obstacles/
+cp $ANXTRACERS/../Textures/capsule100x300Metal.png  $DEST/textures/obstacles/
+cp $ANXTRACERS/../Textures/capsule100x200Rock.png   $DEST/textures/obstacles/
+cp $ANXTRACERS/../Textures/capsule100x100Metal.png  $DEST/textures/obstacles/
+cp $ANXTRACERS/../Textures/poly5Vert128ARock.png    $DEST/textures/obstacles/
+cp $ANXTRACERS/../Textures/poly5Vert128BRock.png    $DEST/textures/obstacles/
+cp $ANXTRACERS/../Textures/poly7Vert128ARock.png    $DEST/textures/obstacles/
+
+# Background + FX textures
+cp $ANXTRACERS/../Textures/GameBackground.png        $DEST/textures/
+cp $ANXTRACERS/../Textures/CollisionSpark.png        $DEST/textures/
+cp $ANXTRACERS/../Textures/SpaceDustParticle.png     $DEST/textures/
+cp $ANXTRACERS/../Textures/ReverseTurnThrusters.png  $DEST/textures/
 ```
 
 ---
@@ -516,6 +556,9 @@ cp $ANXTRACERS/levels/000000a0-0e7e-4003-9913-4aedc38e1ba5.json \
 ## Open Questions / Decisions Deferred
 
 1. **Max players per room** — not decided yet. Start unbounded, add room splitting if needed.
-2. **Poly obstacle vertex data** — needs Unity editor export script for exact shapes.
-3. **Spawn points** — hardcode a few positions initially; later embed in map JSON.
+2. **Spawn points** — hardcode a few positions initially; later embed in map JSON.
+
+## World Bounds
+
+No bounds. Ships drift freely in infinite space. The camera follows the local ship with no clamp. No wrap-around, no kill zone, no invisible walls.
 
