@@ -9,9 +9,11 @@ import {
   TextStyle,
 } from 'pixi.js'
 import { PIXELS_PER_UNIT } from '../physics/ShipPhysics'
-import type { ShipState } from '../physics/ShipPhysics'
+import type { ShipState, InputState } from '../physics/ShipPhysics'
 import type { LevelData, Obstacle } from '../data/levels'
 import { OBSTACLE_SIZE, quatToAngle } from '../data/levels'
+import { ThrusterFX } from './ThrusterFX'
+import type { ShipSkinData } from './ThrusterFX'
 
 /**
  * Convert game angle (radians, CCW from +Y) to PixiJS sprite rotation.
@@ -35,7 +37,8 @@ export class GameRenderer {
   private bgSprite!: TilingSprite
   private shipSprite!: Sprite
   private obstacleSprites: Sprite[] = []
-  // thrusterSprites reserved for Phase 2
+  private thrusterFX!: ThrusterFX
+  private lastInput: InputState = { torque: 0, surge: 0, strafe: 0 }
   private debugText!: Text
 
   async init(canvas: HTMLCanvasElement, shipId: string): Promise<void> {
@@ -66,10 +69,14 @@ export class GameRenderer {
     const shipTexture = await Assets.load(`/assets/ships/${shipId}.png`)
     this.shipSprite = new Sprite(shipTexture)
     this.shipSprite.anchor.set(0.5)
-    // Display at 2 * Radius — will be updated per ship after ShipData loads
-    this.shipSprite.width = 2 * PIXELS_PER_UNIT
-    this.shipSprite.height = 2 * PIXELS_PER_UNIT
+    // Ship sprite is 1×1 Unity unit; will be confirmed in setShipRadius
+    this.shipSprite.width = PIXELS_PER_UNIT
+    this.shipSprite.height = PIXELS_PER_UNIT
     this.worldContainer.addChild(this.shipSprite)
+
+    // ─── Thruster FX — parented to shipSprite so it inherits its transform ──
+    this.thrusterFX = new ThrusterFX(this.shipSprite)
+    await this.thrusterFX.init()
 
     // ─── Debug overlay ─────────────────────────────────────────────────────
     const style = new TextStyle({ fill: '#88ff88', fontSize: 12, fontFamily: 'monospace' })
@@ -85,11 +92,22 @@ export class GameRenderer {
     this.bgSprite.height = this.app.screen.height
   }
 
-  /** Set ship sprite size from loaded ship data radius. */
-  setShipRadius(radius: number): void {
-    const px = radius * 2 * PIXELS_PER_UNIT
+  /** Load thruster skin data. */
+  async loadSkin(shipId: string): Promise<void> {
+    const url = `/assets/ships/${shipId}.skin.json`
+    const skin: ShipSkinData = await Assets.load(url)
+    this.thrusterFX.loadSkin(skin)
+  }
+
+  /** Set ship sprite size. The ship sprite occupies 1×1 Unity units in the game world. */
+  setShipRadius(_radius: number): void {
+    // Sprite is 1 Unity unit wide/tall → display at exactly PIXELS_PER_UNIT pixels.
+    // This ensures skin JSON positions (in Unity units) map correctly to texture pixels.
+    const px = PIXELS_PER_UNIT
     this.shipSprite.width = px
     this.shipSprite.height = px
+    // Compensate so ThrusterFX children are sized in screen pixels, not ship-sprite-local pixels
+    this.thrusterFX.setParentScale(this.shipSprite.scale.x, this.shipSprite.scale.y)
   }
 
   /** Load and add obstacle sprites from a level. */
@@ -132,6 +150,11 @@ export class GameRenderer {
     return sprite
   }
 
+  /** Store the latest input so render() can drive thruster FX. */
+  setInput(input: InputState): void {
+    this.lastInput = input
+  }
+
   /**
    * Render one frame given the current physics state.
    * Called after physics has been stepped.
@@ -152,6 +175,9 @@ export class GameRenderer {
     this.shipSprite.position.set(shipScreenX, shipScreenY)
     this.shipSprite.rotation = gameAngleToPixi(ship.angle)
 
+    // ─── Thruster FX (parented to shipSprite — position/rotation inherited) ─
+    this.thrusterFX.update(this.lastInput)
+
     // ─── Debug text ────────────────────────────────────────────────────────
     const speed = Math.sqrt(ship.vel.x ** 2 + ship.vel.y ** 2)
     this.debugText.text =
@@ -161,6 +187,7 @@ export class GameRenderer {
   }
 
   destroy(): void {
+    this.thrusterFX.destroy()
     this.app.destroy()
   }
 }

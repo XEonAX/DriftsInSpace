@@ -4,6 +4,8 @@ import { stepShip, createShipState, FIXED_DT } from '../physics/ShipPhysics'
 import type { ShipState } from '../physics/ShipPhysics'
 import { loadShipData } from '../data/ships'
 import { loadLevel, DEFAULT_LEVEL_ID } from '../data/levels'
+import { buildColliders, resolveCollisions } from '../physics/Collision'
+import type { ObstacleCollider } from '../physics/Collision'
 
 export class Game {
   private renderer = new GameRenderer()
@@ -14,6 +16,7 @@ export class Game {
   private rafId = 0
   private running = false
   private shipId: string
+  private colliders: ObstacleCollider[] = []
 
   constructor(shipId: string, _displayName: string) {
     this.shipId = shipId
@@ -27,13 +30,15 @@ export class Game {
 
     await this.renderer.init(canvas, this.shipId)
 
-    // Load ship physics data
+    // Load ship physics data + skin
     const shipData = await loadShipData(this.shipId)
     this.renderer.setShipRadius(shipData.ShipDetails.Radius)
+    await this.renderer.loadSkin(this.shipId)
 
     // Load the default level
     const level = await loadLevel(DEFAULT_LEVEL_ID)
     await this.renderer.loadLevel(level)
+    this.colliders = buildColliders(level.Obstacles)
 
     // Handle window resize
     window.addEventListener('resize', () => this.renderer.resizeBg())
@@ -62,7 +67,11 @@ export class Game {
     if (details) {
       while (this.accumulator >= FIXED_DT) {
         const input = this.input.getInput()
+        this.renderer.setInput(input)
         this.shipState = stepShip(this.shipState, input, details)
+        if (this.colliders.length > 0) {
+          this.shipState = resolveCollisions(this.shipState, details, this.colliders)
+        }
         this.accumulator -= FIXED_DT
       }
     }
