@@ -12,6 +12,7 @@ interface ThrusterDef {
   /** 0 = main thruster (fires on forward surge), ~180 = reverse */
   rotationDeg: number
   tint: number
+  side: 'main' | 'left' | 'right'
 }
 
 // The trail ribbon was 0.11 Unity units (≈7px) — that's the narrow tapered tail.
@@ -54,7 +55,7 @@ export class ThrusterFX {
     this.sprites = []
     this.defs = []
 
-    const push = (t: ThrusterEntry) => {
+    const push = (t: ThrusterEntry, side: ThrusterDef['side']) => {
       const def: ThrusterDef = {
         localX: t.Position.x,
         localY: t.Position.y,
@@ -62,6 +63,7 @@ export class ThrusterFX {
         scaleY: t.Scale.y,
         rotationDeg: t.Rotation,
         tint: rgbaToHex(t.Color),
+        side,
       }
       this.defs.push(def)
 
@@ -85,9 +87,9 @@ export class ThrusterFX {
       this.sprites.push(sprite)
     }
 
-    for (const t of skinData.MainThrusters ?? []) push(t)
-    if (skinData.LeftReverseThruster)  push(skinData.LeftReverseThruster)
-    if (skinData.RightReverseThruster) push(skinData.RightReverseThruster)
+    for (const t of skinData.MainThrusters ?? []) push(t, 'main')
+    if (skinData.LeftReverseThruster)  push(skinData.LeftReverseThruster,  'left')
+    if (skinData.RightReverseThruster) push(skinData.RightReverseThruster, 'right')
   }
 
   /**
@@ -140,8 +142,13 @@ export interface ShipSkinData {
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
 function thrusterPower(def: ThrusterDef, input: InputState): number {
-  const isMain = def.rotationDeg < 90 || def.rotationDeg > 270
-  return isMain ? Math.max(0, input.surge) : Math.max(0, -input.surge)
+  switch (def.side) {
+    case 'main':  return Math.max(0,  input.surge)
+    // Left thruster fires on reverse OR turning right (CW = negative torque)
+    case 'left':  return Math.max(Math.max(0, -input.surge), Math.max(0, -input.torque))
+    // Right thruster fires on reverse OR turning left (CCW = positive torque)
+    case 'right': return Math.max(Math.max(0, -input.surge), Math.max(0,  input.torque))
+  }
 }
 
 function rgbaToHex(c: { r: number; g: number; b: number }): number {
