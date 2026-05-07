@@ -1,0 +1,24 @@
+{
+  "Texture": null,
+  "Sprite": null,
+  "ShipId": "00000001-51de-c0c0-5eed-be51deb0d1e5",
+  "ShipName": "Eagle",
+  "UserDisplayName": "AEonAX",
+  "State": "Published",
+  "UserId": "1deafade-b01d-50da-c0de-ac1d1cfacade",
+  "CreatedAt": "2022-01-09T20:50:47.9185675+05:30",
+  "Version": 3,
+  "ShipDetails": {
+    "Mass": 10.0,
+    "LDrag": 0.4,
+    "ADrag": 6.0,
+    "SurgeForward": 40.0,
+    "SurgeBackward": 35.0,
+    "Strafe": 2.0,
+    "Torque": 30.0,
+    "Radius": 0.63,
+    "Friction": 0.4,
+    "Bounce": 0.3
+  },
+  "SignV4": "AD135D5A3D302A1943199884033FFE7A"
+}

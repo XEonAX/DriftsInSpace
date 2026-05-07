@@ -1,0 +1,24 @@
+{
+  "Texture": null,
+  "Sprite": null,
+  "ShipId": "00000003-f0c1-caca-deaf-d1ba51cab0de",
+  "ShipName": "Squid",
+  "UserDisplayName": "AEonAX",
+  "State": "Published",
+  "UserId": "1deafade-b01d-50da-c0de-ac1d1cfacade",
+  "CreatedAt": "2022-05-15T20:50:47.9185675+05:30",
+  "Version": 3,
+  "ShipDetails": {
+    "Mass": 12.0,
+    "LDrag": 1.0,
+    "ADrag": 6.0,
+    "SurgeForward": 200.0,
+    "SurgeBackward": 130.0,
+    "Strafe": 2.0,
+    "Torque": 80.0,
+    "Radius": 0.63,
+    "Friction": 0.2,
+    "Bounce": 0.6
+  },
+  "SignV4": "042DD58F4D98DFC9868B89E4539C6D18"
+}

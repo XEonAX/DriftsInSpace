@@ -1,0 +1,72 @@
+{
+  "Version": 100,
+  "ShipSkinId": "00000003-f0c1-caca-deaf-d1ba51cab0de",
+  "SkinName": "ANX Squid",
+  "FromShipSkinId": "00000000-0000-0000-0000-000000000000",
+  "ShipId": "00000003-f0c1-caca-deaf-d1ba51cab0de",
+  "UserId": "00000000-0000-0000-0000-000000000000",
+  "State": "Published",
+  "Exclusive": false,
+  "UserDisplayName": "AEonAX",
+  "LeftReverseThruster": {
+    "Position": {
+      "x": -0.375,
+      "y": 0.259,
+      "z": 0.0
+    },
+    "Scale": {
+      "x": 0.18,
+      "y": 0.2,
+      "z": 1.0
+    },
+    "Rotation": 200.0,
+    "Color": {
+      "r": 1.0,
+      "g": 1.0,
+      "b": 1.0,
+      "a": 1.0
+    }
+  },
+  "RightReverseThruster": {
+    "Position": {
+      "x": 0.375,
+      "y": 0.259,
+      "z": 0.0
+    },
+    "Scale": {
+      "x": 0.18,
+      "y": 0.2,
+      "z": 1.0
+    },
+    "Rotation": 160.000015,
+    "Color": {
+      "r": 1.0,
+      "g": 1.0,
+      "b": 1.0,
+      "a": 1.0
+    }
+  },
+  "MainThrusters": [
+    {
+      "Position": {
+        "x": 0.0,
+        "y": -0.348,
+        "z": 0.0
+      },
+      "Scale": {
+        "x": 0.5,
+        "y": 0.4,
+        "z": 1.0
+      },
+      "Rotation": 0.0,
+      "Color": {
+        "r": 1.0,
+        "g": 1.0,
+        "b": 1.0,
+        "a": 1.0
+      }
+    }
+  ],
+  "CreatedAt": "0001-01-01T00:00:00",
+  "ModifiedAt": "0001-01-01T00:00:00"
+}

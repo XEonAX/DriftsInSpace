@@ -1,0 +1,24 @@
+{
+  "Texture": null,
+  "Sprite": null,
+  "ShipId": "00000000-ace5-00f5-0b01-d1b5ecd00dee",
+  "ShipName": "Sparrow",
+  "UserDisplayName": "AEonAX",
+  "State": "Published",
+  "UserId": "1deafade-b01d-50da-c0de-ac1d1cfacade",
+  "CreatedAt": "2022-01-09T20:50:47.9185675+05:30",
+  "Version": 3,
+  "ShipDetails": {
+    "Mass": 10.0,
+    "LDrag": 0.2,
+    "ADrag": 5.0,
+    "SurgeForward": 20.0,
+    "SurgeBackward": 10.0,
+    "Strafe": 2.0,
+    "Torque": 20.0,
+    "Radius": 0.63,
+    "Friction": 0.4,
+    "Bounce": 0.3
+  },
+  "SignV4": "8F02EDDAB9C92324812993A072477969"
+}
