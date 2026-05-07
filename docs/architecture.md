@@ -8,221 +8,286 @@ Technical reference for data formats, simulation math, network protocol, and ANX
 
 ### Fixed-Step Loop
 
-Runs at 50 Hz. Wall clock time accumulates; sim ticks consume it in fixed chunks.
+50 Hz. Wall clock accumulates; sim ticks consume it in fixed chunks.
 
 ```
+TICK_DT = 0.02   // seconds (50 Hz)
+
 acc += wallDeltaTime
-while acc >= 0.02:
-    acc -= 0.02
-    world.tick(0.02)
-renderAlpha = acc / 0.02          // [0, 1] for visual interpolation
+while acc >= TICK_DT:
+    acc -= TICK_DT
+    world.tick(TICK_DT)
+renderAlpha = acc / TICK_DT     // [0, 1] for visual interpolation
 ```
 
-**ANXRacers equivalent:** `PhysicsSimul.cs` — `Physics2DTimeStep = 0.01` (100Hz). DriftsInSpace uses 50Hz; the loop structure is identical.
+**ANXRacers equivalent:** `PhysicsSimul.cs` — `Physics2DTimeStep = 0.01` (100Hz). Same loop structure, halved rate.
 
 ### Ship Force Integration
 
 Each tick, for each ship:
 
 ```
-// Input
-surge  ∈ [-1, 1]    (forward/backward)
-strafe ∈ [-1, 1]    (lateral)
-torque ∈ [-1, 1]    (rotation)
-
-// Heading vectors
-forward = (cos(angle), sin(angle))
-right   = (-sin(angle), cos(angle))
+// Heading
+forward = ( cos(angle), sin(angle) )
+right   = (-sin(angle), cos(angle) )
 
 // Thrust
-thrustMag = surge > 0 ? surge * stats.surgeForward
-                       : surge * stats.surgeBackward
-vel += forward * thrustMag * dt / stats.mass
-vel += right   * stats.strafe * strafe * dt / stats.mass
-vel += boost                        // persistent field accumulator
+thrust = surge > 0 ? surge * stats.surgeForward : surge * stats.surgeBackward
+vel += forward * thrust  * dt / mass
+vel += right   * strafe  * stats.strafe  * dt / mass
+vel += boost              // persistent field vector (Boost.cs port)
 
-// Conditional drag (ANXRacers: drag=0.001 at rest, MaxLDrag/MaxADrag when thrusting)
+// Conditional drag — ANXRacers: near-zero at rest, MaxLDrag/MaxADrag when thrusting
 if surge == 0 && torque == 0:
-    linearDragThisTick  = COASTING_DRAG   // near 0
-    angularDragThisTick = COASTING_ADRAG  // near 0
+    lDrag = COASTING_DRAG     // ~0.001
+    aDrag = COASTING_ADRAG
 else:
-    linearDragThisTick  = stats.linearDrag
-    angularDragThisTick = stats.angularDrag
+    lDrag = stats.linearDrag
+    aDrag = stats.angularDrag
 
-vel        *= (1 - linearDragThisTick  * dt)
-angularVel *= (1 - angularDragThisTick * dt)
-
-// Torque
-angularVel += -torque * stats.torqueMultiplier * dt / stats.mass
+vel        *= (1 - lDrag * dt)
+angularVel *= (1 - aDrag * dt)
+angularVel += -torque * stats.torque * dt / mass
 
 // Integrate
 pos   += vel * dt
 angle += angularVel * dt
 ```
 
-**ANXRacers equivalent:** `Spaceship.FixedUpdate()` — `rb.AddTorque`, `rb.AddRelativeForce`, conditional `rb.angularDrag = 0.001 / MaxADrag`.
+**ANXRacers equivalent:** `Spaceship.FixedUpdate()` — `rb.AddTorque`, `rb.AddRelativeForce`, conditional drag assignment.
 
 ### Drift Metric
 
 ```
-// Used for audio (DriftAudio) and future drift-score system
 right      = (-sin(angle), cos(angle))
-driftValue = |dot(normalize(vel), right)| * |surge|
+driftValue = |dot(normalize(vel), right)| * |surge|    // [0, 1]
 ```
-Range [0, 1]. 0 = aligned with heading. 1 = fully sideways.
+
+0 = moving aligned with heading. 1 = fully sideways at full throttle.
 
 **ANXRacers equivalent:** `Drifter.FixedUpdate()` — `Vector2.Dot(velocity/5, transform.right * inputSurge)`.
 
 ### Engine Audio Formula
 
 ```
-// Run every render frame (visual update, not sim tick)
-enginePower = lerp(enginePower, clamp(surge, 0, 1) * 0.5, dt * 3)
-volume = enginePower + 0.3
-pitch  = enginePower + 1.0 - (0.5 / (1 + |vel| * 0.5 + |angularVel| * 0.5))
+// Runs every render frame (not sim tick) — visual smoothing
+enginePower  = lerp(enginePower, clamp(surge, 0, 1) * 0.5, dt * 3)
+volume       = enginePower + 0.3
+pitch (rate) = enginePower + 1.0 - (0.5 / (1 + |vel| * 0.5 + |angularVel| * 0.5))
 ```
 
 **ANXRacers equivalent:** `Spaceship.Update()` — identical formula.
 
-### Collision Response (Circle vs Segment)
+### Collision Response (Circle vs Capsule, the most common case)
 
 ```
-// Given: circle center P, radius r, segment A→B
-closest = A + clamp(dot(P-A, B-A) / |B-A|², 0, 1) * (B-A)
+// Capsule endpoints A, B; capsule radius rc; ship radius rs
+t       = clamp(dot(P-A, B-A) / |B-A|², 0, 1)
+closest = A + t * (B-A)
 n       = normalize(P - closest)
-depth   = r - |P - closest|
+depth   = (rs + rc) - |P - closest|
 
 if depth > 0:
-    // Push out
-    pos += n * depth
-    // Reflect velocity with material coefficients
-    vDotN   = dot(vel, n)
-    vel     -= n * vDotN * (1 + stats.bounce)
-    // Friction: dampen tangential component
-    tangent  = vel - dot(vel, n) * n
-    vel     -= tangent * stats.friction * dt
+    pos  += n * depth                          // push out
+    vDotN = dot(vel, n)
+    vel  -= n * vDotN * (1 + stats.bounce)    // reflect
+    // friction: dampen tangential component
+    tang  = vel - dot(vel, n) * n
+    vel  -= tang * stats.friction * dt
 ```
 
-**ANXRacers equivalent:** Unity Physics2D contact solver. Same result, explicit here.
+Same pattern for circle-vs-circle (no endpoint clamping), circle-vs-rect (4 edges), circle-vs-polygon (SAT).
 
 ---
 
-## Track Data Format
+## Level / Track Data Format
 
-Full JSON schema. Stored in server DB as `TEXT` column (compressed with gzip for download).
+### ANXRacers Level JSON (read-only input to `ANXRacersLoader`)
+
+```typescript
+// Mirrors ANXRacers Level.cs + Classes.cs exactly
+interface ANXRacersLevelJson {
+  LevelId:   string;
+  LevelName: string;
+  Track: {
+    Laps:        number;
+    Difficulty:  number;
+    Checkpoints: Array<{
+      Position: { x: number; y: number; z: number };
+      Rotation: { x: number; y: number; z: number; w: number };
+    }>;
+  };
+  Obstacles: Array<{
+    Type:      string;   // ObstacleType enum key
+    Transform: { Position: XYZ; Rotation: XYZW };
+  }>;
+  Props: Array<{
+    Type:      string;   // 'Boost' | 'Attractor' | 'Repulsor'
+    Transform: { Position: XYZ; Rotation: XYZW };
+  }>;
+}
+```
+
+### DriftsInSpace Native TrackData
+
+Created by the editor (M7) and stored in IndexedDB / server DB.
 
 ```typescript
 interface TrackData {
   // Identity
-  id:           string;    // UUID v4
+  id:           string;              // UUID
   name:         string;
-  authorId:     string;    // UUID
-  version:      number;    // incremented on each save
-  createdAt:    string;    // ISO 8601
-  modifiedAt:   string;
+  authorId:     string;
+  version:      number;
+  lapCount:     number;
 
-  // Race config
-  startPos:     [number, number];   // world coords [x, y]
+  // Race start
+  startPos:     [number, number];    // world coords
   startAngle:   number;             // radians
-  lapCount:     number;             // 1 = point-to-point time trial
 
-  // Geometry
-  walls: {
-    segments: SegmentDef[];         // all wall segments (left + right walls merged)
-  };
-  obstacles:    ObstacleDef[];
+  // All physics objects — same split as ANXRacers Level.Obstacles / Level.Props
+  obstacles:    PlacedObstacle[];
+  props:        PlacedProp[];
+
+  // Checkpoints (ordered) — same as ANXRacers TrackData.Checkpoints
   checkpoints:  CheckpointDef[];
-  boostPads:    BoostPadDef[];
-  attractors:   AttractorDef[];
 
-  // Editor metadata (not used by sim)
-  centerline:   [number, number][]; // raw drawn path, for re-editing
+  // Editor-only metadata (not consumed by sim)
+  centerline:   [number, number][];  // raw drawn path for re-editing
   brushRadius:  number;
 }
 
-interface SegmentDef {
-  a:        [number, number];
-  b:        [number, number];
-  material: 'Rock' | 'Metal' | 'Ice';
+interface PlacedObstacle {
+  type:     ObstacleType;    // string key into ObstacleShapes table
+  pos:      [number, number];
+  rotation: number;          // radians (converted from ANXRacers Quaternion)
 }
 
-interface ObstacleDef {
-  kind:     'Segment' | 'Capsule' | 'Polygon';
-  // Segment / Capsule
-  a?:       [number, number];
-  b?:       [number, number];
-  radius?:  number;
-  // Polygon
-  verts?:   [number, number][];
-  material: 'Rock' | 'Metal' | 'Ice';
+interface PlacedProp {
+  type:  PropType;            // 'Boost' | 'Attractor' | 'Repulsor'
+  pos:   [number, number];
+  angle: number;              // direction (Boost) or unused (Attractor/Repulsor)
 }
 
 interface CheckpointDef {
-  index:    number;           // ordered 0, 1, 2, ...
   pos:      [number, number];
   radius:   number;           // inversely proportional to difficulty
   isFinish: boolean;
 }
-
-interface BoostPadDef {
-  pos:      [number, number];
-  angle:    number;           // direction of boost vector
-  strength: number;           // magnitude applied to ship boost vector
-  radius:   number;           // trigger radius
-}
-
-interface AttractorDef {
-  pos:      [number, number];
-  radius:   number;           // field radius
-  strength: number;           // positive = pull, negative = push
-}
 ```
 
-**ANXRacers equivalent:** `Level.cs` — `TrackData Track`, `ObstacleTypeAndTransform[] Obstacles`, `PropTypeAndTransform[] Props`. Field names deliberately mirrored.
+### ObstacleType Enum and Collision Shapes
+
+All 38 `ObstacleType` values from ANXRacers `Statics.cs`, with their collision geometry:
+
+```typescript
+// src/sim/ObstacleShapes.ts
+type Material = 'Rock' | 'Metal' | 'Ice' | 'Glass' | 'None';
+type CollisionShape =
+  | { kind: 'circle';  radius: number;   material: Material }
+  | { kind: 'capsule'; radius: number;   halfHeight: number; material: Material }
+  | { kind: 'polygon'; verts: Vec2[];                        material: Material }
+  | { kind: 'rect';    halfW: number;    halfH: number;      material: Material };
+
+const SHAPES: Record<ObstacleType, CollisionShape> = {
+  // Meteors (circles)
+  meteorBrown_big1:  { kind: 'circle', radius: 2.56, material: 'Rock' },
+  meteorBrown_big2:  { kind: 'circle', radius: 2.56, material: 'Rock' },
+  meteorBrown_big3:  { kind: 'circle', radius: 2.56, material: 'Rock' },
+  meteorBrown_big4:  { kind: 'circle', radius: 2.56, material: 'Rock' },
+  spaceMeteors_001:  { kind: 'circle', radius: 0.64, material: 'Rock' },
+  spaceMeteors_002:  { kind: 'circle', radius: 0.64, material: 'Rock' },
+  spaceMeteors_003:  { kind: 'circle', radius: 0.64, material: 'Rock' },
+  spaceMeteors_004:  { kind: 'circle', radius: 0.64, material: 'Rock' },
+  // Boxes (rects — sizes from elementExplosiveNNN name)
+  elementExplosive016: { kind: 'rect', halfW: 0.08, halfH: 0.08, material: 'Metal' },
+  // ... all 38 entries — exact values to be measured from Unity prefabs
+  // Capsules
+  capsule100x300Rock:  { kind: 'capsule', radius: 0.5, halfHeight: 1.5, material: 'Rock' },
+  capsule100x300Metal: { kind: 'capsule', radius: 0.5, halfHeight: 1.5, material: 'Metal' },
+  capsule100x300Ice:   { kind: 'capsule', radius: 0.5, halfHeight: 1.5, material: 'Ice' },
+  capsule100x200Rock:  { kind: 'capsule', radius: 0.5, halfHeight: 1.0, material: 'Rock' },
+  capsule100x200Metal: { kind: 'capsule', radius: 0.5, halfHeight: 1.0, material: 'Metal' },
+  capsule100x200Ice:   { kind: 'capsule', radius: 0.5, halfHeight: 1.0, material: 'Ice' },
+  // Circles
+  circle100x100Rock:   { kind: 'circle', radius: 0.5, material: 'Rock' },
+  circle100x100Metal:  { kind: 'circle', radius: 0.5, material: 'Metal' },
+  circle100x100Ice:    { kind: 'circle', radius: 0.5, material: 'Ice' },
+  // Polygons — verts extracted once from Unity prefabs
+  poly4Vert512ALargeRock: { kind: 'polygon', verts: [/* TBD */], material: 'Rock' },
+  // ...
+};
+```
+
+> **Action required at M2**: open each Unity prefab for polygon obstacles and record the `PolygonCollider2D` vertex arrays. All other shapes can be derived from the name alone.
+
+### PropType
+
+```typescript
+type PropType = 'Boost' | 'Attractor' | 'Repulsor';
+
+// Boost:     adds a directional vector to ship.boost on trigger enter;
+//            removes it on trigger exit (port Boost.cs OnTriggerEnter2D / Exit2D)
+// Attractor: applies radial force toward prop.pos every tick within radius
+// Repulsor:  applies radial force away from prop.pos every tick within radius
+```
 
 ---
 
 ## Ghost Recording Format
 
-Two streams per race, recorded in parallel.
+Two binary streams per race, written in parallel every sim tick.
 
 ### Stream 1 — State Stream (client ghost playback)
 
-Binary, little-endian. Fixed 12 bytes per frame.
+Fixed 10 bytes per frame. Tick is **implicit** — frame index `i` corresponds to race time `i × TICK_DT`.
 
 ```
-Frame layout (12 bytes):
-  [0..3]  tick  : uint32   sim tick counter (0-based, increments each 50Hz tick)
-  [4..7]  x     : int32    pos.x * 1000   (millimetre precision)
-  [8..11] y     : int32    pos.y * 1000
-  [12..13] angle: int16    angle * 10000  (0.0001 radian precision, wraps ±π)
-
-// Note: angle stored as int16 → ±3.2768 rad ≈ ±187.8°
-// For full 360°: store (angle + π) * 10000 as uint16, unwrap on decode
+Bytes  Field     Type     Encoding
+0..3   x         int32    pos.x × 1000   (millimetre precision)
+4..7   y         int32    pos.y × 1000
+8..9   angle     uint16   full-circle: 0..65535 maps to 0..2π
+                          resolution: 360° / 65536 ≈ 0.0055° per unit
 ```
 
-Capacity: 50Hz × 300s race = 15,000 frames × 12 bytes = 180 KB uncompressed.
-After zlib: ~20–40 KB typical.
+**Total per frame: 10 bytes.**  
+50 Hz × 300 s = 15,000 frames × 10 bytes = 150 KB uncompressed → ~20–30 KB zlib.
 
-Uploaded to server on `POST /scores/{trackId}` alongside the score claim. Stored for the player's personal best only.
+Angle encoding:
+```typescript
+// Encode
+const a       = ((angle % TWO_PI) + TWO_PI) % TWO_PI;   // normalise to [0, 2π)
+const encoded = Math.round(a / TWO_PI * 65535) & 0xFFFF; // uint16
 
-### Stream 2 — Input Stream (server anti-cheat, never sent to other clients)
+// Decode
+const angle = (encoded / 65535) * TWO_PI;
 
-Binary, little-endian. Fixed 7 bytes per frame.
+// Interpolation: always interpolate the short way around the circle
+function lerpAngle(a: number, b: number, t: number): number {
+  let d = ((b - a + Math.PI) % TWO_PI) - Math.PI;  // signed delta in (-π, π]
+  return a + d * t;
+}
+```
+
+Uploaded to server on score submission. Stored server-side only for the player's personal best.
+
+### Stream 2 — Input Stream (server audit trail only)
+
+Fixed 7 bytes per frame. **Never downloaded to other clients. Never drives the sim.**
 
 ```
-Frame layout (7 bytes):
-  [0..3]  tick   : uint32
-  [4]     surge  : int8    surge  * 127    (-127..127 maps to -1..1)
-  [5]     strafe : int8    strafe * 127
-  [6]     torque : int8    torque * 127
+Bytes  Field       Type    Encoding
+0..3   frameIndex  uint32  redundant — helps detect truncation
+4      surge       int8    surge  × 127   (-127..127 → -1..1)
+5      strafe      int8    strafe × 127
+6      torque      int8    torque × 127
 ```
 
-15,000 frames × 7 bytes = 105 KB uncompressed. After zlib: ~15–25 KB.
+15,000 frames × 7 bytes = 105 KB uncompressed → ~15–25 KB zlib.
 
-Uploaded alongside state stream. Server re-runs sim from input stream. Score rejected if `|serverTime - claimedTime| > 500ms`.
+Stored alongside state stream. Used by `PassiveAntiCheat` service to detect impossible inputs.
 
-**ANXRacers equivalent:** `Recorder.cs` state recording + Ghost input stream. Split into two streams here for clarity.
+**ANXRacers equivalent:** `Recorder.cs` + `Ghost.Streams[]`. ANXRacers records separate channels per `StateStreams` enum value (`PosX`, `PosY`, `AngZ`, `Surge`, `Strafe`, etc.) as individual compressed float arrays. DriftsInSpace consolidates into two streams for simplicity.
 
 ---
 
@@ -230,90 +295,107 @@ Uploaded alongside state stream. Server re-runs sim from input stream. Score rej
 
 ### Packet Encoding
 
-All multiplayer packets encoded with MessagePack (`@msgpack/msgpack` on client, `MessagePack-CSharp` on server). No JSON in the multiplayer hot path.
+All multiplayer packets use MessagePack array format (not map) for minimal bytes.
+Client: `@msgpack/msgpack`. Server: `MessagePack-CSharp`.
 
 ### ShipUpdatePacket (Client → Server, 20Hz)
 
 ```typescript
-// MessagePack array format (not map) for minimal bytes
-[mpId: uint32, tick: uint32, x: int32, y: int32, angle: int32]
-// Total: ~18 bytes per ship per update
-// angle: same encoding as state stream (radians * 10000)
+// Array: [mpId, tick, x, y, angle]
+// mpId:  uint32
+// tick:  uint32 — client sim tick counter
+// x:     int32  — pos.x × 1000
+// y:     int32  — pos.y × 1000
+// angle: uint16 — same encoding as state stream
+// Total: ~13 bytes per ship
 ```
 
-**ANXRacers equivalent:** `PShipUpdate` — identical fields, same quantization strategy.
+**ANXRacers equivalent:** `PShipUpdate.cs` — identical fields, same quantization. Uses `int` for angle there (not quantised). Here we reuse the uint16 scheme for consistency with the state stream.
 
 ### PlayerStatesPacket (Server → All clients, 20Hz)
 
 ```typescript
-[serverTime: uint32, players: ShipUpdatePacket[]]
-// serverTime: milliseconds since server start (for client clock sync)
+// Array: [serverTime, players[]]
+// serverTime: uint32 — milliseconds since server start
+// players:    ShipUpdatePacket[]
 ```
 
 **ANXRacers equivalent:** `PPlayerStates` in `Client.cs`.
 
-### Client State Buffer (Interpolation)
+### Client State Buffer (port of `RemotePlayer.cs`)
 
 Ring buffer of 50 `ShipUpdatePacket` slots per remote ship.
 
 ```
 On receive:
-  if buffer full: discard oldest, push new
-  else: push new
+  push packet to ring buffer (discard oldest if full)
 
 Each render frame:
-  if bufferHealth >= threshold:
-    advance currentState toward next buffered state
-    interpolate pos/angle between currentState and nextState
+  if bufferHealth >= bufferHealthThreshold:
+    advance currentState; interpolate pos/angle toward nextState
   
-  bufferHealth = |serverTick - clientTick|    // measure of jitter
-  timespeed = bufferHealth > threshold ? 1.05 : (bufferHealth < 3 ? 0.95 : 1.0)
-  // timespeed scales how fast client clock advances to stabilise buffer
+  bufferHealth = |latestServerTick - clientTick|
+  timespeed    = bufferHealth > threshold ? 1.05
+               : bufferHealth < 3         ? 0.95
+               :                            1.0
+  // timespeed scales how fast the client clock advances to stabilise buffer
 ```
 
-**ANXRacers equivalent:** `RemotePlayer.cs` — `LiteRingBuffer<PShipUpdate>`, `bufferHealth`, `timespeed`, `bufferHealthThreshold`.
+**ANXRacers equivalent:** `RemotePlayer.cs` — `LiteRingBuffer<PShipUpdate>`, `bufferHealth`, `timespeed`, `bufferHealthThreshold`. Logic is identical.
 
-### SignalR Hub Methods
+### SignalR Hub Contract
 
 ```csharp
 // Client → Server
 Task SendShipState(ShipUpdatePacket packet);
-Task JoinRoom(string roomCode, string userId, ShipStats shipStats);
+Task JoinRoom(string roomCode, string userId, string shipId);
 Task LeaveRoom();
-Task SendChatMessage(string message);
 
 // Server → Client
 Task ReceivePlayerStates(PlayerStatesPacket packet);
-Task PlayerJoined(PlayerJoinedPacket packet);
+Task PlayerJoined(PlayerJoinedPacket packet);   // includes ShipStats for collision
 Task PlayerLeft(uint mpId);
-Task RaceCountdown(long startAtUnixMs);    // absolute time, all clients sync to it
-Task RaceFinished(RaceResultsPacket packet);
+Task RaceCountdown(long startAtUnixMs);          // absolute time — all clients sync
+Task RaceFinished(RaceResultsPacket results);
 ```
+
+The SignalR JS client is **lazy-loaded** (dynamic `import()` on entering the multiplayer lobby).
+It does not appear in the initial bundle.
 
 ---
 
 ## ANXRacers Port Map
 
-Quick reference: ANXRacers C# class → DriftsInSpace TypeScript equivalent.
-
 | ANXRacers | DriftsInSpace | Notes |
 |---|---|---|
-| `PhysicsSimul.cs` | `sim/SimLoop.ts` | Loop structure identical, 50Hz vs 100Hz |
+| `PhysicsSimul.cs` | `sim/SimLoop.ts` | Loop identical, 50Hz vs 100Hz |
 | `Spaceship.FixedUpdate()` | `sim/Ship.ts tick()` | Force formula identical, no Rigidbody2D |
 | `Drifter.FixedUpdate()` | `audio/DriftAudio.ts` | Same dot product formula |
-| `Boost.cs OnTriggerEnter2D` | `sim/Fields.ts` | Boost vector add/subtract on trigger |
-| `Recorder.cs` | `sim/Recorder.ts` | Two streams (state + input) instead of one |
-| `GhostReplay.cs Update()` | `sim/Ghost.ts` | Frame interpolation logic identical |
+| `Boost.cs OnTriggerEnter/Exit2D` | `sim/Fields.ts` | Boost vector add/subtract on trigger |
+| `Recorder.cs` | `sim/Recorder.ts` | Two flat streams vs per-channel Streams[] |
+| `GhostReplay.cs Update()` | `sim/Ghost.ts` | Frame interpolation identical |
+| `Ghost.Streams[]` | state stream + input stream | Consolidated: 2 streams vs N channels |
+| `StateStreams` enum | state stream channels | PosX+PosY+AngZ merged into state stream |
 | `Checkpoint.cs OnTriggerEnter2D` | `race/CheckpointTracker.ts` | Circle trigger, ordered validation |
+| `Level.cs` | `TrackData` | Field names mirrored |
+| `ObstacleTypeAndTransform` | `PlacedObstacle` | Same: type string + position + rotation |
+| `PropTypeAndTransform` | `PlacedProp` | Same: Boost/Attractor/Repulsor |
+| `ObstacleType` enum | `ObstacleType` string union | Identical values, no C# enum integer |
+| `PropType` enum | `PropType` string union | Boost, Attractor, Repulsor |
+| `ObstacleMaterial` enum | `Material` string union | Rock, Metal, Ice |
 | `CatamaranBrushNeo.cs` | `editor/DualBrush.ts` | Dual-brush wall painting |
-| `SpaceshipCollsions.cs` | `audio/CollisionAudio.ts` | Material audio selection |
+| `TrackEraser.cs` | `editor/Eraser.ts` | Circle erase of placed obstacles |
+| `SpaceshipCollsions.cs` | `audio/CollisionAudio.ts` | Material-based audio |
 | `Client.cs` | `net/MultiplayerClient.ts` | LiteNetLib → SignalR WebSocket |
 | `RemotePlayer.cs` | `net/RemoteShip.ts` | Ring buffer interpolation identical |
-| `PShipUpdate.cs` | `net/Protocol.ts ShipUpdatePacket` | Same fields, MessagePack not LiteNetLib |
-| `InputMgr.cs` | `input/InputManager.ts` | Same `{surge, strafe, torque}` interface |
+| `LiteRingBuffer<T>` | `net/StateBuffer.ts` | Same ring buffer logic |
+| `PShipUpdate.cs` | `net/Protocol.ts` | Same fields, MessagePack vs LiteNetLib |
+| `PPlayerStates.cs` | `net/Protocol.ts` | Same fan-out packet |
+| `InputMgr.cs` | `input/InputManager.ts` | Same `{surge, strafe, torque}` |
 | `CustomizableTouchControlsNeo.cs` | `input/TouchInput.ts` | Moveable virtual joystick |
-| `Level.cs` + `Classes.cs` | `TrackData` interface | Field names mirrored |
-| `ShipPhysics` (DTO) | `ShipStats` | Identical field names |
+| `ShipPhysics` DTO | `ShipStats` | Identical field names |
+| `DtoLevelResponse` | `DtoTrackResponse` (server) | Field names mirrored |
+| `DtoScoreResponse` | `DtoScoreResponse` | Identical |
 
 ---
 
@@ -321,9 +403,10 @@ Quick reference: ANXRacers C# class → DriftsInSpace TypeScript equivalent.
 
 Matches ANXRacers Unity 2D world space:
 - X: rightward
-- Y: upward
-- Angle: radians, 0 = facing right (+X), increases counter-clockwise
-- PixiJS default Y is flipped (Y increases downward) — apply `stage.scale.y = -1` at root container to match
+- Y: upward (Unity convention)
+- Angle: radians, 0 = facing right (+X), counter-clockwise positive
+
+PixiJS default: Y increases downward. Apply `stage.scale.y = -1` at the root container to match. All text and sprites that must not be flipped need a counter-scale: `textObject.scale.y = -1`.
 
 ---
 
@@ -332,8 +415,9 @@ Matches ANXRacers Unity 2D world space:
 | Metric | Target |
 |---|---|
 | Sim tick budget (50Hz = 20ms) | < 2ms for 8 ships + full collision |
-| Render frame (60fps = 16.6ms) | < 8ms (leave headroom for browser) |
-| Initial bundle (gzipped) | < 350 KB |
+| Render frame (60fps = 16.6ms) | < 8ms (leave browser headroom) |
+| Initial bundle gzipped | < 335 KB |
 | Time to first render | < 1 second |
-| Ghost download (60s race) | < 50 KB (zlib state stream) |
-| Multiplayer packet size | < 20 bytes per ship per 50ms update |
+| Ghost download (300s race) | < 35 KB (zlib state stream) |
+| Multiplayer packet per ship | < 13 bytes per 50ms update |
+| SignalR JS client | loaded only on multiplayer entry (lazy) |
