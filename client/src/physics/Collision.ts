@@ -12,7 +12,7 @@
 
 import type { ShipState } from './ShipPhysics'
 import type { ShipDetails } from '../data/ships'
-import type { Obstacle } from '../data/levels'
+import type { Obstacle, Prop } from '../data/levels'
 import { OBSTACLE_SIZE, OBSTACLE_COLLISION_SIZE, OBSTACLE_FORCE_ZONES, OBSTACLE_POLYGON_VERTS, OBSTACLE_CIRCLE_RADIUS, quatToAngle } from '../data/levels'
 
 // Bounce/friction defaults when not present in ShipDetails
@@ -333,4 +333,78 @@ export function resolveCollisions(
   }
 
   return { state: { pos, vel, angle, angVel }, hits }
+}
+
+// ─── Prop physics ─────────────────────────────────────────────────────────────
+
+/**
+ * Boost: AreaEffector2D, m_ForceAngle=90 (local +Y), m_UseGlobalAngle=0, m_ForceMagnitude=100.
+ * Radius 2u circle trigger — continuous force while inside, in prop's local +Y direction.
+ * Attractor: PointEffector2D m_ForceMagnitude=-500, m_ForceMode=2 (InverseSquared), radius=2u.
+ * Repulsor: same but m_ForceMagnitude=500.
+ */
+const BOOST_RADIUS = 2          // m_Radius from Boost.prefab CircleCollider2D
+const BOOST_MAGNITUDE = 100     // m_ForceMagnitude
+// Attractor/Repulsor: PointEffector2D InverseSquared, no fixed radius cutoff
+const ATTRACTOR_MAGNITUDE = -500
+const REPULSOR_MAGNITUDE = 500
+
+export interface PropState {
+  _unused?: never   // kept for future per-prop state if needed
+}
+
+export function initialPropState(): PropState {
+  return {}
+}
+
+/**
+ * Apply prop effects (Boost, Attractor, Repulsor) to the ship.
+ * Returns the updated ShipState.
+ */
+export function applyProps(
+  state: ShipState,
+  details: ShipDetails,
+  props: Prop[],
+  _propState: PropState,
+  dt: number,
+): ShipState {
+  let { pos, vel, angle, angVel } = state
+
+  for (const p of props) {
+    const px = p.Transform.Position.x
+    const py = p.Transform.Position.y
+    const dx = pos.x - px
+    const dy = pos.y - py
+    const dist2 = dx * dx + dy * dy
+
+    if (p.Type === 'Boost') {
+      // AreaEffector2D: continuous force while ship is within radius.
+      // ForceAngle=90 = local +Y. UseGlobalAngle=0 → rotated by prop orientation.
+      if (dist2 >= BOOST_RADIUS * BOOST_RADIUS) continue
+      const propAngle = quatToAngle(p.Transform.Rotation)
+      // Local +Y rotated by propAngle: wx=-sin(a)*0+cos(a)*1... in Y-up: fwx=sin(a), fwy=cos(a)
+      // (same formula as AreaEffector2D force zones: localAngleDeg=90)
+      const fwx = -Math.sin(propAngle)   // local +Y x-component in world space
+      const fwy =  Math.cos(propAngle)   // local +Y y-component in world space
+      const accel = BOOST_MAGNITUDE / details.Mass
+      vel = { x: vel.x + fwx * accel * dt, y: vel.y + fwy * accel * dt }
+    } else {
+      // PointEffector2D: only applies force inside the CircleCollider2D trigger.
+      // Attractor: root scale (2,2) × m_Radius 2 → world r=4.
+      // Repulsor:  root scale (1,1) × m_Radius 2 → world r=2.
+      const ATTRACTOR_REPULSOR_RADIUS = p.Type === 'Attractor' ? 4 : 2
+      if (dist2 >= ATTRACTOR_REPULSOR_RADIUS * ATTRACTOR_REPULSOR_RADIUS) continue
+      if (dist2 < 1e-6) continue
+      const dist = Math.sqrt(dist2)
+      // Direction: ship - prop (outward). Attractor magnitude is negative → pulls inward.
+      const nx = dx / dist
+      const ny = dy / dist
+      const magnitude = p.Type === 'Attractor' ? ATTRACTOR_MAGNITUDE : REPULSOR_MAGNITUDE
+      // InverseSquared: a = magnitude / dist²  (DistanceScale=1)
+      const accel = (magnitude / details.Mass) / dist2
+      vel = { x: vel.x + nx * accel * dt, y: vel.y + ny * accel * dt }
+    }
+  }
+
+  return { pos, vel, angle, angVel }
 }

@@ -11,11 +11,16 @@ export interface Obstacle {
   Transform: ObstacleTransform
 }
 
+export interface Prop {
+  Type: 'Boost' | 'Attractor' | 'Repulsor'
+  Transform: ObstacleTransform
+}
+
 export interface LevelData {
   LevelId: string
   LevelName: string
   Obstacles: Obstacle[]
-  Props: unknown[]
+  Props: Prop[]
 }
 
 /** Convert Unity quaternion (2D rotation around Z) to radians (CCW from +Y). */
@@ -117,4 +122,4 @@ export async function loadLevel(levelId: string): Promise<LevelData> {
   return res.json()
 }
 
-export const DEFAULT_LEVEL_ID = '000000a1-5573-49ba-94bc-e9dd14d3181a' // Alpha-2
+export const DEFAULT_LEVEL_ID = '000000c1-5dc6-4836-850a-a49743c31822' // Alpha-2

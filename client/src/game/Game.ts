@@ -4,8 +4,9 @@ import { stepShip, createShipState, FIXED_DT } from '../physics/ShipPhysics'
 import type { ShipState } from '../physics/ShipPhysics'
 import { loadShipData } from '../data/ships'
 import { loadLevel, DEFAULT_LEVEL_ID } from '../data/levels'
-import { buildColliders, buildForceZones, resolveCollisions, applyForceZones } from '../physics/Collision'
-import type { ObstacleCollider, ForceZone } from '../physics/Collision'
+import { buildColliders, buildForceZones, resolveCollisions, applyForceZones, applyProps, initialPropState } from '../physics/Collision'
+import type { ObstacleCollider, ForceZone, PropState } from '../physics/Collision'
+import type { Prop } from '../data/levels'
 
 export class Game {
   private renderer = new GameRenderer()
@@ -18,6 +19,8 @@ export class Game {
   private shipId: string
   private colliders: ObstacleCollider[] = []
   private forceZones: ForceZone[] = []
+  private props: Prop[] = []
+  private propState: PropState = initialPropState()
 
   constructor(shipId: string, _displayName: string) {
     this.shipId = shipId
@@ -41,6 +44,8 @@ export class Game {
     await this.renderer.loadLevel(level)
     this.colliders = buildColliders(level.Obstacles)
     this.forceZones = buildForceZones(level.Obstacles)
+    this.props = level.Props
+    this.propState = initialPropState()
 
     // Handle window resize
     window.addEventListener('resize', () => this.renderer.resizeBg())
@@ -73,6 +78,9 @@ export class Game {
         this.shipState = stepShip(this.shipState, input, details)
         if (this.forceZones.length > 0) {
           this.shipState = applyForceZones(this.shipState, details, this.forceZones, FIXED_DT)
+        }
+        if (this.props.length > 0) {
+          this.shipState = applyProps(this.shipState, details, this.props, this.propState, FIXED_DT)
         }
         if (this.colliders.length > 0) {
           const { state, hits } = resolveCollisions(this.shipState, details, this.colliders)

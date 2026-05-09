@@ -10,7 +10,7 @@ import {
 } from 'pixi.js'
 import { PIXELS_PER_UNIT } from '../physics/ShipPhysics'
 import type { ShipState, InputState } from '../physics/ShipPhysics'
-import type { LevelData, Obstacle } from '../data/levels'
+import type { LevelData, Obstacle, Prop } from '../data/levels'
 import { OBSTACLE_SIZE, quatToAngle } from '../data/levels'
 import { ThrusterFX } from './ThrusterFX'
 import type { ShipSkinData } from './ThrusterFX'
@@ -37,6 +37,7 @@ export class GameRenderer {
   private bgSprite!: TilingSprite
   private shipSprite!: Sprite
   private obstacleSprites: Sprite[] = []
+  private propSprites: Sprite[] = []
   private thrusterFX!: ThrusterFX
   private shieldSprite!: Sprite          // static ring, always visible
   private shieldHitSprites: Sprite[] = []   // 3 round-robin collision ring instances
@@ -158,6 +159,8 @@ export class GameRenderer {
     // Remove existing obstacle sprites
     for (const s of this.obstacleSprites) this.worldContainer.removeChild(s)
     this.obstacleSprites = []
+    for (const s of this.propSprites) this.worldContainer.removeChild(s)
+    this.propSprites = []
 
     // Pre-load all needed textures
     const types = [...new Set(level.Obstacles.map(o => o.Type))]
@@ -173,6 +176,20 @@ export class GameRenderer {
       const sprite = this.createObstacleSprite(obs, textureMap[obs.Type])
       this.worldContainer.addChildAt(sprite, 0) // below ship
       this.obstacleSprites.push(sprite)
+    }
+
+    // ─── Props ──────────────────────────────────────────────────────────────
+    const [arrowTex, ringTex] = await Promise.all([
+      Assets.load('/assets/textures/ArrowUp.png'),
+      Assets.load('/assets/textures/Ring128.png'),
+    ])
+
+    for (const prop of level.Props) {
+      const sprites = this.createPropSprites(prop, arrowTex, ringTex)
+      for (const s of sprites) {
+        this.worldContainer.addChildAt(s, 0)
+        this.propSprites.push(s)
+      }
     }
   }
 
@@ -191,6 +208,61 @@ export class GameRenderer {
     sprite.rotation = gameAngleToPixi(gameAngle)
 
     return sprite
+  }
+
+  /**
+   * Create prop sprites.
+   * Boost:     white ring (r=2u) + green arrow oriented along prop's local +Y.
+   * Attractor: red ring (r=2u).
+   * Repulsor:  green ring (r=2u).
+   *
+   * Ring texture is Ring128.png; scaled to diameter = 2*radius*PPU pixels.
+   * Arrow texture is ArrowUp.png; displayed at 1×1 unity unit, rotated by prop angle.
+   */
+  private createPropSprites(prop: Prop, arrowTex: Texture, ringTex: Texture): Sprite[] {
+    const { x, y } = worldToLocal(prop.Transform.Position.x, prop.Transform.Position.y)
+    const gameAngle = quatToAngle(prop.Transform.Rotation)
+
+    // Boost:     root scale (1,1) × m_Radius 2 → world r=2 → diameter=4u
+    // Attractor: root scale (2,2) × m_Radius 2 → world r=4 → diameter=8u
+    // Repulsor:  root scale (1,1) × m_Radius 2 → world r=2 → diameter=4u
+    const ringDiameter = prop.Type === 'Attractor'
+      ? 2 * 4 * PIXELS_PER_UNIT   // r=4
+      : 2 * 2 * PIXELS_PER_UNIT   // r=2 (Boost and Repulsor)
+    const result: Sprite[] = []
+
+    // ── Ring (influence area indicator) ──────────────────────────────────
+    const ring = new Sprite(ringTex)
+    ring.anchor.set(0.5)
+    ring.width = ringDiameter
+    ring.height = ringDiameter
+    ring.position.set(x, y)
+    if (prop.Type === 'Boost') {
+      ring.tint = 0xFFFFFF   // white ring for Boost
+      ring.alpha = 0.45
+    } else if (prop.Type === 'Attractor') {
+      ring.tint = 0xFF2222   // red ring for Attractor
+      ring.alpha = 0.55
+    } else {
+      ring.tint = 0x22FF44   // green ring for Repulsor
+      ring.alpha = 0.55
+    }
+    result.push(ring)
+
+    // ── Arrow (Boost only) ───────────────────────────────────────────────
+    if (prop.Type === 'Boost') {
+      const arrow = new Sprite(arrowTex)
+      arrow.anchor.set(0.5)
+      arrow.width = PIXELS_PER_UNIT        // 1×1 unity unit
+      arrow.height = PIXELS_PER_UNIT
+      arrow.position.set(x, y)
+      arrow.rotation = gameAngleToPixi(gameAngle)
+      arrow.tint = 0x44FF88               // green arrow
+      arrow.alpha = 0.92
+      result.push(arrow)
+    }
+
+    return result
   }
 
   /** Store the latest input so render() can drive thruster FX. */

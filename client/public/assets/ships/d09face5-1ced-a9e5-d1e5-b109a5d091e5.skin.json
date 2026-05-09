@@ -1,0 +1,91 @@
+{
+  "ShipSkinId": "d09face5-1ced-a9e5-d1e5-b109a5d091e5",
+  "SkinName": "ANX Froggy-2",
+  "UserId": "1deafade-b01d-50da-c0de-ac1d1cfacade",
+  "Version": 100,
+  "FromShipSkinId": "00000000-0000-0000-0000-000000000000",
+  "ShipId": "d09face5-1ced-a9e5-d1e5-b109a5d091e5",
+  "UserDisplayName": "AEonAX",
+  "CreatedAt": "2024-01-20T15:21:17.505977+05:30",
+  "ModifiedAt": "2024-01-20T15:21:17.50598+05:30",
+  "Exclusive": false,
+  "State": "Published",
+  "LeftReverseThruster": {
+    "Position": {
+      "x": -0.385,
+      "y": 0.21,
+      "z": 0.0
+    },
+    "Scale": {
+      "x": 0.3,
+      "y": 0.4,
+      "z": 0.0
+    },
+    "Rotation": 180.0,
+    "Color": {
+      "r": 0.5,
+      "g": 1.0,
+      "b": 1.0,
+      "a": 1.0
+    }
+  },
+  "RightReverseThruster": {
+    "Position": {
+      "x": 0.385,
+      "y": 0.21,
+      "z": 0.0
+    },
+    "Scale": {
+      "x": 0.3,
+      "y": 0.4,
+      "z": 0.0
+    },
+    "Rotation": 180.0,
+    "Color": {
+      "r": 0.5,
+      "g": 1.0,
+      "b": 1.0,
+      "a": 1.0
+    }
+  },
+  "MainThrusters": [
+    {
+      "Position": {
+        "x": -0.3,
+        "y": -0.41,
+        "z": 0.0
+      },
+      "Scale": {
+        "x": 0.2,
+        "y": 0.2,
+        "z": 0.0
+      },
+      "Rotation": 0.0,
+      "Color": {
+        "r": 0.5,
+        "g": 1.0,
+        "b": 1.0,
+        "a": 1.0
+      }
+    },
+    {
+      "Position": {
+        "x": 0.3,
+        "y": -0.41,
+        "z": 0.0
+      },
+      "Scale": {
+        "x": 0.2,
+        "y": 0.2,
+        "z": 0.0
+      },
+      "Rotation": 0.0,
+      "Color": {
+        "r": 0.5,
+        "g": 1.0,
+        "b": 1.0,
+        "a": 1.0
+      }
+    }
+  ]
+}

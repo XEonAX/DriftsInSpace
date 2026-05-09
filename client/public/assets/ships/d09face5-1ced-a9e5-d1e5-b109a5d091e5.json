@@ -1,0 +1,26 @@
+{
+  "ShipDetails": {
+    "Mass": 10.0,
+    "LDrag": 0.0,
+    "ADrag": 5.0,
+    "SurgeForward": 20.0,
+    "SurgeBackward": 40.0,
+    "Strafe": 2.0,
+    "Torque": 40.0,
+    "Radius": 0.63,
+    "Friction": 0.0,
+    "Bounce": 0.1
+  },
+  "ShipId": "d09face5-1ced-a9e5-d1e5-b109a5d091e5",
+  "ShipName": "Froggy-2",
+  "Version": 3,
+  "Mode": null,
+  "CreatedAt": "2022-01-09T20:50:47.9185675+05:30",
+  "ModifiedAt": "2024-01-23T00:18:24.103902+05:30",
+  "State": "Unpublished",
+  "Texture": null,
+  "SignV4": "E33C41134A2F99483A6251FCE077C3FA",
+  "UserId": "1deafade-b01d-50da-c0de-ac1d1cfacade",
+  "UserDisplayName": "AEonAX",
+  "ShipSkinId": "00000000-0000-0000-0000-000000000000"
+}
