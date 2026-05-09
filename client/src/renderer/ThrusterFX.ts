@@ -26,6 +26,7 @@ export class ThrusterFX {
   private container: Container
   private defs: ThrusterDef[] = []
   private sprites: Sprite[] = []
+  private currentPowers: number[] = []   // smoothed power per thruster
   private texW = 1
   private texH = 1
 
@@ -54,6 +55,7 @@ export class ThrusterFX {
     for (const s of this.sprites) s.destroy()
     this.sprites = []
     this.defs = []
+    this.currentPowers = []
 
     const push = (t: ThrusterEntry, side: ThrusterDef['side']) => {
       const def: ThrusterDef = {
@@ -85,6 +87,7 @@ export class ThrusterFX {
       sprite.visible = false
       this.container.addChild(sprite)
       this.sprites.push(sprite)
+      this.currentPowers.push(0)
     }
 
     for (const t of skinData.MainThrusters ?? []) push(t, 'main')
@@ -93,26 +96,30 @@ export class ThrusterFX {
   }
 
   /**
-   * Called every render frame. Only updates power-driven properties.
-   * Position and rotation are static (ship transform handled by parenting).
+   * Called every render frame. Smoothly lerps power toward the target at 5/s
+   * (0→1 in 0.2 s) so thrust length ramps up/down rather than snapping.
    */
-  update(input: InputState): void {
+  update(input: InputState, dt: number): void {
+    const rate = dt * 5  // 1/0.2s = 5 per second
     for (let i = 0; i < this.defs.length; i++) {
       const def    = this.defs[i]
       const sprite = this.sprites[i]
-      const power  = thrusterPower(def, input)
+      const target = thrusterPower(def, input)
 
-      if (power <= 0) {
+      // Lerp current power toward target
+      const prev = this.currentPowers[i]
+      const cur  = prev + (target - prev) * Math.min(1, rate)
+      this.currentPowers[i] = cur
+
+      if (cur <= 0.01) {
         sprite.visible = false
         continue
       }
 
-      // Use scale.set() rather than width/height to avoid PixiJS AABB issues
-      // on rotated sprites.
       const flicker = 0.92 + Math.random() * 0.16
       sprite.scale.set(
-        BASE_WIDTH  * def.scaleX * power * flicker / this.texW,
-        BASE_HEIGHT * def.scaleY * power * flicker / this.texH,
+        BASE_WIDTH  * def.scaleX * cur * flicker / this.texW,
+        BASE_HEIGHT * def.scaleY * cur * flicker / this.texH,
       )
       sprite.alpha   = 0.85 + Math.random() * 0.15
       sprite.visible = true
@@ -142,12 +149,23 @@ export interface ShipSkinData {
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
 function thrusterPower(def: ThrusterDef, input: InputState): number {
+  const reverse = Math.max(0, -input.surge)
+  const torque  = input.torque  // +1 = CCW/left, -1 = CW/right
   switch (def.side) {
-    case 'main':  return Math.max(0,  input.surge)
-    // Left thruster fires on reverse OR turning right (CW = negative torque)
-    case 'left':  return Math.max(Math.max(0, -input.surge), Math.max(0, -input.torque))
-    // Right thruster fires on reverse OR turning left (CCW = positive torque)
-    case 'right': return Math.max(Math.max(0, -input.surge), Math.max(0,  input.torque))
+    case 'main':
+      return Math.max(0, input.surge)
+    case 'left': {
+      const turnFire       = Math.max(0, -torque)                         // fires when turning right
+      const reducedReverse = reverse * (1 - Math.max(0, torque))          // reduced when turning left
+      const floor          = reverse * 0.5                               // never drops below 25% of reverse
+      return Math.min(1, Math.max(floor, reducedReverse + turnFire))
+    }
+    case 'right': {
+      const turnFire       = Math.max(0, torque)                          // fires when turning left
+      const reducedReverse = reverse * (1 - Math.max(0, -torque))         // reduced when turning right
+      const floor          = reverse * 0.5
+      return Math.min(1, Math.max(floor, reducedReverse + turnFire))
+    }
   }
 }
 
