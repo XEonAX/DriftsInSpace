@@ -13,7 +13,7 @@
 import type { ShipState } from './ShipPhysics'
 import type { ShipDetails } from '../data/ships'
 import type { Obstacle } from '../data/levels'
-import { OBSTACLE_SIZE, OBSTACLE_COLLISION_SIZE, OBSTACLE_FORCE_ZONES, quatToAngle } from '../data/levels'
+import { OBSTACLE_SIZE, OBSTACLE_COLLISION_SIZE, OBSTACLE_FORCE_ZONES, OBSTACLE_POLYGON_VERTS, OBSTACLE_CIRCLE_RADIUS, quatToAngle } from '../data/levels'
 
 // Bounce/friction defaults when not present in ShipDetails
 const DEFAULT_BOUNCE = 0.4
@@ -78,24 +78,80 @@ function circleVsCapsule(
   }
 }
 
+
 /** Circle vs circle test */
 function circleVsCircle(
   sx: number, sy: number, sr: number,
   cx: number, cy: number, cr: number,
 ): CollisionResult | null {
-  const dx = sx - cx
-  const dy = sy - cy
+  const dx = sx - cx, dy = sy - cy
   const dist = Math.sqrt(dx * dx + dy * dy)
   const minDist = sr + cr
   if (dist >= minDist) return null
   const invDist = dist < 1e-6 ? 1 : 1 / dist
-  return {
-    depth: minDist - dist,
-    nx: dx * invDist,
-    ny: dy * invDist,
-  }
+  return { depth: minDist - dist, nx: dx * invDist, ny: dy * invDist }
 }
 
+/**
+ * Circle vs convex polygon. Vertices are pre-transformed to world space (CCW winding, Y-up).
+ *
+ * Phase 1 — inside test: if circle centre is inside the polygon (all outward face distances ≤ 0),
+ *   push out through the shallowest face.
+ * Phase 2 — outside test: find the closest point on the polygon boundary; if within radius,
+ *   resolve from there. This correctly handles both edge and vertex (corner) contacts without
+ *   the false-positive / false-negative issues of a pure SAT vertex-axis test.
+ */
+function circleVsPolygon(
+  sx: number, sy: number, sr: number,
+  verts: Array<[number, number]>,
+): CollisionResult | null {
+  const n = verts.length
+  let inside = true
+  let maxFaceDist = -Infinity
+  let faceNx = 0, faceNy = 0
+
+  for (let i = 0; i < n; i++) {
+    const [ax, ay] = verts[i]
+    const [bx, by] = verts[(i + 1) % n]
+    const ex = bx - ax, ey = by - ay
+    const len = Math.sqrt(ex * ex + ey * ey)
+    if (len < 1e-9) continue
+    const nx = ey / len, ny = -ex / len  // outward normal (CCW, Y-up)
+    const d = (sx - ax) * nx + (sy - ay) * ny  // signed dist: + = outside
+
+    if (d > 0) inside = false
+    if (d > maxFaceDist) { maxFaceDist = d; faceNx = nx; faceNy = ny }
+  }
+
+  if (inside) {
+    // Centre is inside; push out through shallowest (least-negative) face.
+    // maxFaceDist ≤ 0 here, so depth = sr - maxFaceDist ≥ sr.
+    return { depth: sr - maxFaceDist, nx: faceNx, ny: faceNy }
+  }
+
+  // Centre is outside; find closest point on each edge (including endpoints).
+  let closestDist2 = Infinity
+  let cpx = sx, cpy = sy
+
+  for (let i = 0; i < n; i++) {
+    const [ax, ay] = verts[i]
+    const [bx, by] = verts[(i + 1) % n]
+    const ex = bx - ax, ey = by - ay
+    const len2 = ex * ex + ey * ey
+    const t = len2 > 0 ? Math.max(0, Math.min(1, ((sx - ax) * ex + (sy - ay) * ey) / len2)) : 0
+    const px = ax + t * ex, py = ay + t * ey
+    const dx = sx - px, dy = sy - py
+    const d2 = dx * dx + dy * dy
+    if (d2 < closestDist2) { closestDist2 = d2; cpx = px; cpy = py }
+  }
+
+  const closestDist = Math.sqrt(closestDist2)
+  if (closestDist >= sr) return null
+
+  const dx = sx - cpx, dy = sy - cpy
+  if (closestDist < 1e-9) return { depth: sr, nx: faceNx, ny: faceNy }
+  return { depth: sr - closestDist, nx: dx / closestDist, ny: dy / closestDist }
+}
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /** Pre-processed force zone — a trigger capsule that accelerates the ship. */
@@ -110,13 +166,15 @@ export interface ForceZone {
 
 /** Pre-processed obstacle for fast collision queries. */
 export interface ObstacleCollider {
-  type: 'capsule' | 'circle'
+  type: 'capsule' | 'circle' | 'polygon'
   cx: number
   cy: number
   angle: number     // capsule axis angle
   halfLen: number   // capsule only
   endRadius: number // capsule end radius (= half width)
   radius: number    // circle only
+  /** World-space polygon vertices (pre-transformed, polygon type only). */
+  verts: Array<[number, number]>
   bounce: number
   friction: number
 }
@@ -133,12 +191,26 @@ export function buildColliders(obstacles: Obstacle[]): ObstacleCollider[] {
     if (obs.Type.startsWith('capsule')) {
       const endRadius = cwu / 2
       const halfLen = Math.max(0, (chu - cwu) / 2)
-      return { type: 'capsule', cx, cy, angle, halfLen, endRadius, radius: 0, bounce: DEFAULT_BOUNCE, friction: DEFAULT_FRICTION }
-    } else {
-      // poly — approximate as circle
-      const radius = Math.min(wu, hu) / 2
-      return { type: 'circle', cx, cy, angle: 0, halfLen: 0, endRadius: 0, radius, bounce: DEFAULT_BOUNCE, friction: DEFAULT_FRICTION }
+      return { type: 'capsule', cx, cy, angle, halfLen, endRadius, radius: 0, verts: [], bounce: DEFAULT_BOUNCE, friction: DEFAULT_FRICTION }
     }
+    const circleRadius = OBSTACLE_CIRCLE_RADIUS[obs.Type]
+    if (circleRadius !== undefined) {
+      return { type: 'circle', cx, cy, angle: 0, halfLen: 0, endRadius: 0, radius: circleRadius, verts: [], bounce: DEFAULT_BOUNCE, friction: DEFAULT_FRICTION }
+    }
+    // Polygon obstacle — transform local vertices to world space once at build time
+    const localVerts = OBSTACLE_POLYGON_VERTS[obs.Type]
+    if (!localVerts) {
+      // Fallback: diamond approximation
+      const r = Math.min(wu, hu) / 2
+      const wv: Array<[number, number]> = [[0, r], [-r, 0], [0, -r], [r, 0]]
+      return { type: 'polygon', cx, cy, angle: 0, halfLen: 0, endRadius: 0, radius: 0, verts: wv, bounce: DEFAULT_BOUNCE, friction: DEFAULT_FRICTION }
+    }
+    const cosA = Math.cos(angle), sinA = Math.sin(angle)
+    const verts: Array<[number, number]> = localVerts.map(([lx, ly]) => [
+      cx + lx * cosA - ly * sinA,
+      cy + lx * sinA + ly * cosA,
+    ])
+    return { type: 'polygon', cx, cy, angle, halfLen: 0, endRadius: 0, radius: 0, verts, bounce: DEFAULT_BOUNCE, friction: DEFAULT_FRICTION }
   })
 }
 
@@ -222,8 +294,10 @@ export function resolveCollisions(
 
     if (col.type === 'capsule') {
       result = circleVsCapsule(pos.x, pos.y, sr, col.cx, col.cy, col.angle, col.halfLen, col.endRadius)
-    } else {
+    } else if (col.type === 'circle') {
       result = circleVsCircle(pos.x, pos.y, sr, col.cx, col.cy, col.radius)
+    } else {
+      result = circleVsPolygon(pos.x, pos.y, sr, col.verts)
     }
 
     if (!result) continue
