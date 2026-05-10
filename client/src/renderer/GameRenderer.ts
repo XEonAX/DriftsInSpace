@@ -2,7 +2,6 @@ import {
   Application,
   Container,
   Sprite,
-  TilingSprite,
   Texture,
   Assets,
   Text,
@@ -14,6 +13,7 @@ import type { LevelData, Obstacle, Prop } from '../data/levels'
 import { OBSTACLE_SIZE, quatToAngle } from '../data/levels'
 import { ThrusterFX } from './ThrusterFX'
 import type { ShipSkinData } from './ThrusterFX'
+import { BackgroundRenderer } from './BackgroundRenderer'
 
 /**
  * Convert game angle (radians, CCW from +Y) to PixiJS sprite rotation.
@@ -34,7 +34,7 @@ function worldToLocal(wx: number, wy: number): { x: number; y: number } {
 export class GameRenderer {
   app!: Application
   private worldContainer!: Container
-  private bgSprite!: TilingSprite
+  private bgRenderer = new BackgroundRenderer()
   private shipSprite!: Sprite
   private obstacleSprites: Sprite[] = []
   private propSprites: Sprite[] = []
@@ -51,24 +51,19 @@ export class GameRenderer {
     await this.app.init({
       canvas,
       resizeTo: window,
-      antialias: true,
+      antialias:  true,
       background: '#05050f',
+      // Force WebGL2 — background shaders use GLSL only (no WebGPU/WGSL variant).
+      preference: 'webgl',
     })
 
     // ─── World container (camera space) ────────────────────────────────────
     this.worldContainer = new Container()
     this.app.stage.addChild(this.worldContainer)
 
-    // ─── Tiling background ─────────────────────────────────────────────────
-    const bgTexture = await Assets.load('/assets/textures/GameBackground.png')
-    this.bgSprite = new TilingSprite({
-      texture: bgTexture,
-      width: this.app.screen.width,
-      height: this.app.screen.height,
-    })
-    this.bgSprite.tileScale.set(0.5)
-    // Background is in stage space (not world), so it always fills the viewport
-    this.app.stage.addChildAt(this.bgSprite, 0)
+    // ─── Parallax background (3 procedural GLSL shader layers) ─────────────
+    // Inserted at stage indices 0-2, behind worldContainer.
+    this.bgRenderer.init(this.app, this.app.stage)
 
     // ─── Ship sprite ───────────────────────────────────────────────────────
     const shipTexture = await Assets.load(`/assets/ships/${shipId}.png`)
@@ -112,9 +107,7 @@ export class GameRenderer {
 
   /** Resize background to match window. Called on window resize. */
   resizeBg(): void {
-    if (!this.bgSprite) return
-    this.bgSprite.width = this.app.screen.width
-    this.bgSprite.height = this.app.screen.height
+    this.bgRenderer.resize(this.app.screen.width, this.app.screen.height)
   }
 
   /** Load thruster skin data. */
@@ -358,11 +351,8 @@ export class GameRenderer {
     const camPy = -cameraY * PIXELS_PER_UNIT * zoomScale
     this.worldContainer.position.set(W / 2 - camPx, H / 2 - camPy)
 
-    // Background parallax follows camera
-    // Background parallax uses raw world-space camera position (no zoom factor).
-    const camPxRaw = cameraX * PIXELS_PER_UNIT
-    const camPyRaw = -cameraY * PIXELS_PER_UNIT
-    this.bgSprite.tilePosition.set(-camPxRaw * 0.15, -camPyRaw * 0.15)
+    // Scroll all three background layers using world-space camera position.
+    this.bgRenderer.update(cameraX, cameraY, W, H)
 
     // ─── Ship sprite + shield rings (world-space positions in worldContainer) ─
     const shipScreenX = ship.pos.x * PIXELS_PER_UNIT
@@ -394,6 +384,7 @@ export class GameRenderer {
 
   destroy(): void {
     this.thrusterFX.destroy()
+    this.bgRenderer.destroy()
     this.app.destroy()
   }
 }
