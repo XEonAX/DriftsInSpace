@@ -6,8 +6,8 @@
  *   width = w, height = h → end radius = w/2, body segment length = h - w
  * Poly obstacles: treated as circles (radius = half the shorter side)
  *
- * Collision response: elastic impulse with restitution from ShipDetails.Bounce.
- * Friction tangential damping from ShipDetails.Friction.
+ * Collision response: elastic impulse with restitution (bounce) from the
+ * obstacle's physics material. Tangential velocity is scaled by (1 - friction).
  */
 
 import type { ShipState } from './ShipPhysics'
@@ -15,9 +15,43 @@ import type { ShipDetails } from '../data/ships'
 import type { Obstacle, Prop } from '../data/levels'
 import { OBSTACLE_SIZE, OBSTACLE_COLLISION_SIZE, OBSTACLE_FORCE_ZONES, OBSTACLE_POLYGON_VERTS, OBSTACLE_CIRCLE_RADIUS, quatToAngle } from '../data/levels'
 
-// Bounce/friction defaults when not present in ShipDetails
-const DEFAULT_BOUNCE = 0.4
-const DEFAULT_FRICTION = 0.3
+// ─── Obstacle physics materials ──────────────────────────────────────────────
+// Raw values from ANXRacers/Assets/Materials/*.physicsMaterial2D.
+// These are the OBSTACLE side only.
+// The combined value = Average(ship, obstacle) — Unity's default combine mode.
+// Ship-side values come from ShipDetails.Friction / ShipDetails.Bounce (per-ship JSON).
+// Spaceship.physicsMaterial2D defaults (friction=0.4, bounce=0.3) are used as
+// fallback when a ship JSON doesn't include those fields.
+interface PhysicsMaterial {
+  friction:   number   // tangential drag on contact (0 = frictionless)
+  bounciness: number   // restitution coefficient (0 = inelastic, 1 = elastic)
+}
+
+const MATERIAL_ICE:   PhysicsMaterial = { friction: 0.0,  bounciness: 0.1 }
+const MATERIAL_METAL: PhysicsMaterial = { friction: 0.1,  bounciness: 0.4 }
+const MATERIAL_ROCK:  PhysicsMaterial = { friction: 0.4,  bounciness: 0.1 }
+// Fallback for obstacle types whose material is unrecognised.
+const MATERIAL_DEFAULT: PhysicsMaterial = { friction: 0.3, bounciness: 0.2 }
+
+// Spaceship.physicsMaterial2D defaults — used when ship JSON omits Friction/Bounce.
+const SHIP_FRICTION_DEFAULT = 0.4
+const SHIP_BOUNCE_DEFAULT   = 0.3
+
+/**
+ * Derive an obstacle's physics material from its type name.
+ *
+ * Naming conventions from ANXRacers:
+ *   *Rock / meteorBrown_* / spaceMeteors_* / poly* → Rock
+ *   *Metal / elementExplosive*                     → Metal
+ *   *Ice / *Glass / capsuleForce*Ice               → Ice
+ */
+function materialFor(type: string): PhysicsMaterial {
+  if (type.includes('Rock')  || type.startsWith('meteor') ||
+      type.startsWith('spaceMeteors') || type.startsWith('poly')) return MATERIAL_ROCK
+  if (type.includes('Metal') || type.startsWith('elementExplosive'))  return MATERIAL_METAL
+  if (type.includes('Ice')   || type.includes('Glass'))               return MATERIAL_ICE
+  return MATERIAL_DEFAULT
+}
 
 // ─── Geometry helpers ────────────────────────────────────────────────────────
 
@@ -187,15 +221,16 @@ export function buildColliders(obstacles: Obstacle[]): ObstacleCollider[] {
     const angle = quatToAngle(obs.Transform.Rotation)
     const cx = obs.Transform.Position.x
     const cy = obs.Transform.Position.y
+    const { friction, bounciness: bounce } = materialFor(obs.Type)
 
     if (obs.Type.startsWith('capsule')) {
       const endRadius = cwu / 2
       const halfLen = Math.max(0, (chu - cwu) / 2)
-      return { type: 'capsule', cx, cy, angle, halfLen, endRadius, radius: 0, verts: [], bounce: DEFAULT_BOUNCE, friction: DEFAULT_FRICTION }
+      return { type: 'capsule', cx, cy, angle, halfLen, endRadius, radius: 0, verts: [], bounce, friction }
     }
     const circleRadius = OBSTACLE_CIRCLE_RADIUS[obs.Type]
     if (circleRadius !== undefined) {
-      return { type: 'circle', cx, cy, angle: 0, halfLen: 0, endRadius: 0, radius: circleRadius, verts: [], bounce: DEFAULT_BOUNCE, friction: DEFAULT_FRICTION }
+      return { type: 'circle', cx, cy, angle: 0, halfLen: 0, endRadius: 0, radius: circleRadius, verts: [], bounce, friction }
     }
     // Polygon obstacle — transform local vertices to world space once at build time
     const localVerts = OBSTACLE_POLYGON_VERTS[obs.Type]
@@ -203,14 +238,14 @@ export function buildColliders(obstacles: Obstacle[]): ObstacleCollider[] {
       // Fallback: diamond approximation
       const r = Math.min(wu, hu) / 2
       const wv: Array<[number, number]> = [[0, r], [-r, 0], [0, -r], [r, 0]]
-      return { type: 'polygon', cx, cy, angle: 0, halfLen: 0, endRadius: 0, radius: 0, verts: wv, bounce: DEFAULT_BOUNCE, friction: DEFAULT_FRICTION }
+      return { type: 'polygon', cx, cy, angle: 0, halfLen: 0, endRadius: 0, radius: 0, verts: wv, bounce, friction }
     }
     const cosA = Math.cos(angle), sinA = Math.sin(angle)
     const verts: Array<[number, number]> = localVerts.map(([lx, ly]) => [
       cx + lx * cosA - ly * sinA,
       cy + lx * sinA + ly * cosA,
     ])
-    return { type: 'polygon', cx, cy, angle, halfLen: 0, endRadius: 0, radius: 0, verts, bounce: DEFAULT_BOUNCE, friction: DEFAULT_FRICTION }
+    return { type: 'polygon', cx, cy, angle, halfLen: 0, endRadius: 0, radius: 0, verts, bounce, friction }
   })
 }
 
@@ -285,11 +320,15 @@ export function resolveCollisions(
 ): { state: ShipState; hits: Array<{ nx: number; ny: number }> } {
   let { pos, vel, angle, angVel } = state
   const sr = details.Radius
-  const bounce = (details as unknown as Record<string, number>)['Bounce'] ?? DEFAULT_BOUNCE
-  const friction = (details as unknown as Record<string, number>)['Friction'] ?? DEFAULT_FRICTION
+  // Per-ship material (from ShipDetails JSON), falling back to Spaceship.physicsMaterial2D.
+  const shipFriction = details.Friction ?? SHIP_FRICTION_DEFAULT
+  const shipBounce   = details.Bounce   ?? SHIP_BOUNCE_DEFAULT
   const hits: Array<{ nx: number; ny: number }> = []
 
   for (const col of colliders) {
+    // Unity Average combine: combined = (ship + obstacle) / 2
+    const friction = (shipFriction + col.friction) / 2
+    const bounce   = (shipBounce   + col.bounce)   / 2
     let result: CollisionResult | null
 
     if (col.type === 'capsule') {
@@ -312,23 +351,54 @@ export function resolveCollisions(
     }
 
     // ── 2. Impulse ──────────────────────────────────────────────────────────
-    const vDotN = vel.x * nx + vel.y * ny
+    // For a circle, the contact point relative to CoM is r = (−nx·sr, −ny·sr).
+    // The rotational contribution to contact-point velocity is:
+    //   v_rot = ω × r  →  (ω·ny·sr,  −ω·nx·sr)   (2D cross: ω scalar, r 2D)
+    // Normal component of v_rot is always zero for a circle (r ⊥ n never happens
+    // here — r = −n·sr so r is anti-parallel to n → r×n = 0). So bounce is
+    // unaffected by spin, but tangential velocity IS affected.
+    const vcx = vel.x + angVel * ny * sr   // full contact-point velocity X
+    const vcy = vel.y - angVel * nx * sr   // full contact-point velocity Y
+
+    const vDotN = vcx * nx + vcy * ny      // = vel·n  (spin adds nothing here)
 
     // Only respond if moving INTO the surface
     if (vDotN >= 0) continue
 
-    // Normal impulse (elastic with restitution)
+    // Normal impulse (restitution, infinite-mass wall).
     const jn = -(1 + bounce) * vDotN
 
-    // Tangential (friction) impulse
-    const tx = vel.x - vDotN * nx
-    const ty = vel.y - vDotN * ny
-    const tLen = Math.sqrt(tx * tx + ty * ty)
-    const invT = tLen < 1e-6 ? 0 : 1 / tLen
+    // Tangential velocity at contact point (includes spin contribution).
+    const tvx = vcx - vDotN * nx
+    const tvy = vcy - vDotN * ny
+    const tLen = Math.sqrt(tvx * tvx + tvy * tvy)
 
-    vel = {
-      x: vel.x + jn * nx - friction * tLen * tx * invT,
-      y: vel.y + jn * ny - friction * tLen * ty * invT,
+    vel = { x: vel.x + jn * nx, y: vel.y + jn * ny }
+
+    // Coulomb friction + angular coupling.
+    if (tLen > 1e-6) {
+      const I = 0.5 * details.Mass * sr * sr
+
+      // r × t̂  (scalar) — used for effective mass and angular impulse.
+      // r = (−nx·sr, −ny·sr),  t̂ = (tvx, tvy) / tLen
+      const rxt = (-nx * sr) * (tvy / tLen) - (-ny * sr) * (tvx / tLen)
+
+      // Effective mass in the tangential direction accounts for how much of
+      // the impulse goes into spin vs linear motion. Without this, a heavily
+      // spinning ship would have its spin over- or under-corrected.
+      const mEff = 1 / (1 / details.Mass + rxt * rxt / I)
+
+      // Coulomb cap: slide freely on glancing contacts; grip on hard impacts.
+      const jt = Math.min(tLen * mEff, friction * jn)
+
+      vel = {
+        x: vel.x - jt * (tvx / tLen),
+        y: vel.y - jt * (tvy / tLen),
+      }
+
+      // Angular impulse: Δω = −(r × t̂) · jt / I
+      // This both creates spin from linear sliding AND damps spin from contact.
+      angVel -= rxt * jt / I
     }
   }
 

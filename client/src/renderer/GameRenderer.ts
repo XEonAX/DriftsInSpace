@@ -330,21 +330,39 @@ export class GameRenderer {
     this.worldContainer.scale.set(zoomScale)
 
     // ─── Lookahead + soft-zone clamp ───────────────────────────────────────
-    const LOOKAHEAD = 0.5   // m_LookaheadTime
-    const SOFT_ZONE = 0.35  // fraction of half-screen each axis (m_SoftZoneWidth=0.3)
+    // LOOKAHEAD: how far ahead of the ship (in seconds of travel) the camera
+    //   tries to look. Raw desired camera = smoothedPos + vel * LOOKAHEAD.
+    //
+    // SOFT_ZONE: the ship must always land within this fraction of the half-screen
+    //   from the camera centre. We clamp the *camera position* — not just the
+    //   lookahead offset — so that the ship stays inside the zone regardless of
+    //   how much smoothedPos lags behind the actual ship position.
+    //
+    //   Screen half-extents in world units (accounts for zoom):
+    //     halfW = (W/2) / (PPU * zoom)
+    //   Soft zone radius:
+    //     softW = halfW * SOFT_ZONE
+    //   Camera is clamped so that:
+    //     ship.pos - softW  <=  cameraX  <=  ship.pos + softW
+    //   This guarantees the ship stays within SOFT_ZONE * half-screen pixels of
+    //   centre at any zoom level.
+    const LOOKAHEAD = 0.5    // m_LookaheadTime
+    const SOFT_ZONE = 0.35   // fraction of half-screen each axis
 
-    let laX = this.smoothedVel.x * LOOKAHEAD
-    let laY = this.smoothedVel.y * LOOKAHEAD
+    // Desired camera target: smoothedPos pushed ahead by velocity.
+    // Uses smoothedVel so collision spikes don't snap the camera.
+    const desiredCamX = this.smoothedPos.x + this.smoothedVel.x * LOOKAHEAD
+    const desiredCamY = this.smoothedPos.y + this.smoothedVel.y * LOOKAHEAD
 
-    // Clamp in world units so ship stays within SOFT_ZONE of screen center.
-    // Divide by zoomScale because zooming out makes the visible world larger.
+    // Soft-zone radius in world units (scales with zoom so pixel bound is constant).
     const halfW = (W / 2) / (PIXELS_PER_UNIT * zoomScale)
     const halfH = (H / 2) / (PIXELS_PER_UNIT * zoomScale)
-    laX = Math.max(-halfW * SOFT_ZONE, Math.min(halfW * SOFT_ZONE, laX))
-    laY = Math.max(-halfH * SOFT_ZONE, Math.min(halfH * SOFT_ZONE, laY))
+    const softW = halfW * SOFT_ZONE
+    const softH = halfH * SOFT_ZONE
 
-    const cameraX = this.smoothedPos.x + laX
-    const cameraY = this.smoothedPos.y + laY
+    // Clamp camera so ship.pos stays within the soft zone.
+    const cameraX = Math.max(ship.pos.x - softW, Math.min(ship.pos.x + softW, desiredCamX))
+    const cameraY = Math.max(ship.pos.y - softH, Math.min(ship.pos.y + softH, desiredCamY))
     // worldContainer is scaled by zoomScale, so world-space pixel coords are
     // multiplied by zoomScale when placed on screen.
     const camPx = cameraX * PIXELS_PER_UNIT * zoomScale

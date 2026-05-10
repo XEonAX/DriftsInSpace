@@ -122,4 +122,4 @@ export async function loadLevel(levelId: string): Promise<LevelData> {
   return res.json()
 }
 
-export const DEFAULT_LEVEL_ID = '000000c1-5dc6-4836-850a-a49743c31822' // Alpha-2
+export const DEFAULT_LEVEL_ID = '000000c2-c291-4a9e-9555-d6cc5f995f62' // Alpha-2
