@@ -63,6 +63,8 @@ export class Game {
   // Stored after init — avoids closure allocation in loop
   private _details: import('../data/ships').ShipDetails | null = null
 
+  private prevShipState: ShipState = createShipState()
+
   private loop = (timestamp: number): void => {
     if (!this.running) return
 
@@ -73,6 +75,7 @@ export class Game {
     const details = this._details
     if (details) {
       while (this.accumulator >= FIXED_DT) {
+        this.prevShipState = this.shipState
         const input = this.input.getInput()
         this.renderer.setInput(input)
         this.shipState = stepShip(this.shipState, input, details)
@@ -91,7 +94,20 @@ export class Game {
       }
     }
 
-    this.renderer.render(this.shipState)
+    // Sub-frame interpolation: blend between prev and current physics state
+    // so rendering is smooth even at 50Hz physics / 60Hz display.
+    const alpha = this.accumulator / FIXED_DT
+    const prev = this.prevShipState
+    const curr = this.shipState
+    const interpolated: ShipState = {
+      pos:    { x: prev.pos.x + (curr.pos.x - prev.pos.x) * alpha,
+                y: prev.pos.y + (curr.pos.y - prev.pos.y) * alpha },
+      vel:    curr.vel,
+      angle:  prev.angle + (curr.angle - prev.angle) * alpha,
+      angVel: curr.angVel,
+    }
+
+    this.renderer.render(interpolated)
     this.rafId = requestAnimationFrame(this.loop)
   }
 

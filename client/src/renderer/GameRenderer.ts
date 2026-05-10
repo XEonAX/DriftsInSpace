@@ -274,21 +274,99 @@ export class GameRenderer {
    * Render one frame given the current physics state.
    * Called after physics has been stepped.
    */
+  // ─── Camera / zoom config ─────────────────────────────────────────────────
+  // Set ZOOM_ENABLED = false to disable speed-based zoom out entirely.
+  private static readonly ZOOM_ENABLED = true
+
+  // ─── Cinemachine-style camera state ──────────────────────────────────────
+  // - smoothedPos: exponential follow of ship.pos (snappy, DAMPING=0.12s)
+  // - smoothedVel: exponential follow of ship.vel (~0.5s) — damps collision spikes
+  // - smoothedZoom: exponential follow of target zoom scale (~0.4s)
+  private smoothedPos  = { x: 0, y: 0 }
+  private smoothedVel  = { x: 0, y: 0 }
+  private smoothedZoom = 1.0
+  private cameraReady  = false
   private lastRenderTime = 0
 
   render(ship: ShipState): void {
     const W = this.app.screen.width
     const H = this.app.screen.height
 
-    // ─── Camera: center on ship ────────────────────────────────────────────
+    // ─── Delta time ────────────────────────────────────────────────────────
+    const now = performance.now()
+    const dt  = this.lastRenderTime > 0 ? Math.min((now - this.lastRenderTime) / 1000, 0.1) : 0
+    this.lastRenderTime = now
+
+    // ─── Smooth position + velocity ────────────────────────────────────────
+    const POS_DAMPING   = 0.12  // s — snappy position follow
+    const VEL_SMOOTHING = 0.5   // s — damps collision-induced velocity spikes
+    if (!this.cameraReady) {
+      this.smoothedPos.x  = ship.pos.x
+      this.smoothedPos.y  = ship.pos.y
+      this.smoothedVel.x  = ship.vel.x
+      this.smoothedVel.y  = ship.vel.y
+      this.smoothedZoom   = 1.0
+      this.cameraReady    = true
+    } else {
+      const kp = 1 - Math.exp(-dt / POS_DAMPING)
+      this.smoothedPos.x += (ship.pos.x - this.smoothedPos.x) * kp
+      this.smoothedPos.y += (ship.pos.y - this.smoothedPos.y) * kp
+      const kv = 1 - Math.exp(-dt / VEL_SMOOTHING)
+      this.smoothedVel.x += (ship.vel.x - this.smoothedVel.x) * kv
+      this.smoothedVel.y += (ship.vel.y - this.smoothedVel.y) * kv
+    }
+
+    // ─── Speed-based zoom (ZoomCurve from ShipCamera.prefab) ──────────────
+    // ZoomCurve: speed 0→5 u/s maps to ortho-size offset 0→5 (nearly linear).
+    // Base ortho = 6. Scale factor = 6 / (6 + offset).
+    // At speed=0: scale=1.0 (no zoom). At speed=5+: scale=6/11≈0.545 (zoomed out).
+    // Uses smoothedVel magnitude so collisions don't cause zoom spikes.
+    const BASE_ORTHO = 6
+    const ZOOM_SPEED_MAX = 5   // u/s at which max zoom-out is reached
+    const ZOOM_DAMPING = 0.4   // s — how fast zoom transitions
+
+    let zoomScale = 1.0
+    if (GameRenderer.ZOOM_ENABLED) {
+      const speed = Math.sqrt(this.smoothedVel.x ** 2 + this.smoothedVel.y ** 2)
+      const zoomOffset = Math.min(speed, ZOOM_SPEED_MAX)   // linear, matches ZoomCurve
+      const targetZoom = BASE_ORTHO / (BASE_ORTHO + zoomOffset)
+      const kz = 1 - Math.exp(-dt / ZOOM_DAMPING)
+      this.smoothedZoom += (targetZoom - this.smoothedZoom) * kz
+      zoomScale = this.smoothedZoom
+    }
+    this.worldContainer.scale.set(zoomScale)
+
+    // ─── Lookahead + soft-zone clamp ───────────────────────────────────────
+    const LOOKAHEAD = 0.5   // m_LookaheadTime
+    const SOFT_ZONE = 0.35  // fraction of half-screen each axis (m_SoftZoneWidth=0.3)
+
+    let laX = this.smoothedVel.x * LOOKAHEAD
+    let laY = this.smoothedVel.y * LOOKAHEAD
+
+    // Clamp in world units so ship stays within SOFT_ZONE of screen center.
+    // Divide by zoomScale because zooming out makes the visible world larger.
+    const halfW = (W / 2) / (PIXELS_PER_UNIT * zoomScale)
+    const halfH = (H / 2) / (PIXELS_PER_UNIT * zoomScale)
+    laX = Math.max(-halfW * SOFT_ZONE, Math.min(halfW * SOFT_ZONE, laX))
+    laY = Math.max(-halfH * SOFT_ZONE, Math.min(halfH * SOFT_ZONE, laY))
+
+    const cameraX = this.smoothedPos.x + laX
+    const cameraY = this.smoothedPos.y + laY
+    // worldContainer is scaled by zoomScale, so world-space pixel coords are
+    // multiplied by zoomScale when placed on screen.
+    const camPx = cameraX * PIXELS_PER_UNIT * zoomScale
+    const camPy = -cameraY * PIXELS_PER_UNIT * zoomScale
+    this.worldContainer.position.set(W / 2 - camPx, H / 2 - camPy)
+
+    // Background parallax follows camera
+    // Background parallax uses raw world-space camera position (no zoom factor).
+    const camPxRaw = cameraX * PIXELS_PER_UNIT
+    const camPyRaw = -cameraY * PIXELS_PER_UNIT
+    this.bgSprite.tilePosition.set(-camPxRaw * 0.15, -camPyRaw * 0.15)
+
+    // ─── Ship sprite + shield rings (world-space positions in worldContainer) ─
     const shipScreenX = ship.pos.x * PIXELS_PER_UNIT
     const shipScreenY = -ship.pos.y * PIXELS_PER_UNIT
-    this.worldContainer.position.set(W / 2 - shipScreenX, H / 2 - shipScreenY)
-
-    // Background tiles scroll opposite to camera (world-space feel)
-    this.bgSprite.tilePosition.set(-shipScreenX * 0.15, -shipScreenY * 0.15)
-
-    // ─── Ship sprite + shield rings ────────────────────────────────────────
     this.shipSprite.position.set(shipScreenX, shipScreenY)
     this.shipSprite.rotation = gameAngleToPixi(ship.angle)
     this.shieldSprite.position.set(shipScreenX, shipScreenY)
@@ -304,9 +382,6 @@ export class GameRenderer {
     }
 
     // ─── Thruster FX (parented to shipSprite — position/rotation inherited) ─
-    const now = performance.now()
-    const dt  = this.lastRenderTime > 0 ? Math.min((now - this.lastRenderTime) / 1000, 0.1) : 0
-    this.lastRenderTime = now
     this.thrusterFX.update(this.lastInput, dt)
 
     // ─── Debug text ────────────────────────────────────────────────────────
