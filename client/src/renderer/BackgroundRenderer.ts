@@ -17,6 +17,58 @@
 import { Application, Container, Filter, GlProgram, Sprite, Texture, UniformGroup } from 'pixi.js'
 import { PIXELS_PER_UNIT } from '../physics/ShipPhysics'
 
+// ─── Background colour constants ───────────────────────────────────────────
+// All values are linear RGB in [0, 1]. Edit here to retheme the background.
+
+// Stars
+const STAR_COLOR_WARM = [1.00, 0.88, 0.70] as const  // yellowish warm stars
+const STAR_COLOR_COOL = [0.70, 0.88, 1.00] as const  // bluish cool stars
+
+// Nebula
+const NEBULA_COLOR_RED  = [0.55, 0.05, 0.08] as const  // dark crimson region
+const NEBULA_COLOR_BLUE = [0.04, 0.08, 0.38] as const  // dark blue-purple region
+
+// Fog
+const FOG_COLOR = [0.02, 0.03, 0.07] as const  // near-black dark wisps
+
+// ─── Background scale / density constants ─────────────────────────────────
+
+// Stars
+// Number of grid cells across one screen-width. Higher = more, smaller stars.
+const STAR_GRID_DENSITY   = 80
+// Fraction of cells that contain a star (0–1). 0.65 threshold → ~35 % fill.
+const STAR_DENSITY_THRESH = 0.65
+// Min and max star radius in cell-UV space.
+const STAR_SIZE_MIN = 0.04
+const STAR_SIZE_MAX = 0.09  // min + h1 * (max - min)
+
+// Nebula
+// Overall UV scale — lower = larger nebula features.
+const NEBULA_UV_SCALE  = 0.55
+// FBM frequency multiplier applied on top of UV scale.
+const NEBULA_FBM_FREQ  = 2.5
+// How aggressively to threshold + brighten nebula patches (contrast).
+const NEBULA_CONTRAST  = 2.2
+
+// Fog
+// Overall UV scale — lower = larger fog patches.
+const FOG_UV_SCALE   = 0.85
+// FBM frequency on top of UV scale.
+const FOG_FBM_FREQ   = 3.0
+// Threshold below which fog is invisible (0–1). Higher = sparser wisps.
+const FOG_THRESHOLD  = 0.42
+// Alpha multiplier — controls how opaque the fog wisps are.
+const FOG_OPACITY    = 0.40
+
+/** Format a colour constant as a GLSL vec3 literal. */
+function v3(c: readonly [number, number, number]): string {
+  return `vec3(${c[0]}, ${c[1]}, ${c[2]})`
+}
+/** Format a number as a GLSL float literal (always includes a decimal point). */
+function f(n: number): string {
+  return n % 1 === 0 ? `${n}.0` : `${n}`
+}
+
 // ─── PixiJS v8 default filter vertex shader ────────────────────────────────
 // Source: node_modules/pixi.js/lib/filters/defaults/defaultFilter.vert.mjs
 const FILTER_VERT = `
@@ -79,9 +131,8 @@ uniform vec2 uOffset;
 ${HASH_FN}
 
 void main(void) {
-    // 80 grid cells across one screen-width; each cell may contain one star.
     vec2 uv      = vTextureCoord + uOffset;
-    vec2 scaled  = uv * 80.0;
+    vec2 scaled  = uv * ${f(STAR_GRID_DENSITY)};
     vec2 cell    = floor(scaled);
     vec2 cellFrc = fract(scaled);
 
@@ -96,13 +147,12 @@ void main(void) {
             float h2   = hash(nc + vec2(33.7, 17.1));
             float h3   = hash(nc + vec2(71.2, 43.8));
 
-            // ~35 % of cells contain a star.
-            if (h1 > 0.65) {
+            if (h1 > ${f(STAR_DENSITY_THRESH)}) {
                 vec2  starPos   = vec2(h2, h3);
                 vec2  d         = cellFrc - starPos - vec2(float(i), float(j));
                 float dist      = length(d);
-                float size      = 0.04 + h1 * 0.05;       // radius in cell-UV space
-                float intensity = (h1 - 0.65) / 0.35;     // brighter for higher h1
+                float size      = ${f(STAR_SIZE_MIN)} + h1 * ${f(STAR_SIZE_MAX - STAR_SIZE_MIN)};
+                float intensity = (h1 - ${f(STAR_DENSITY_THRESH)}) / ${f(1.0 - STAR_DENSITY_THRESH)};
                 float star      = intensity * smoothstep(size, 0.0, dist);
                 if (star > brightness) {
                     brightness = star;
@@ -113,7 +163,7 @@ void main(void) {
     }
 
     // Warm (yellowish) ↔ cool (bluish) star tint.
-    vec3 col = mix(vec3(1.0, 0.88, 0.70), vec3(0.70, 0.88, 1.0), warmth) * brightness;
+    vec3 col = mix(${v3(STAR_COLOR_WARM)}, ${v3(STAR_COLOR_COOL)}, warmth) * brightness;
     finalColor = vec4(col, brightness);
 }
 `
@@ -140,17 +190,16 @@ float fbm(vec2 p) {
 }
 
 void main(void) {
-    // Scale: nebula features span roughly 2 screen-widths.
-    vec2 uv = (vTextureCoord + uOffset) * 0.55;
+    vec2 uv = (vTextureCoord + uOffset) * ${f(NEBULA_UV_SCALE)};
 
-    float n1 = fbm(uv * 2.5);
+    float n1 = fbm(uv * ${f(NEBULA_FBM_FREQ)});
     // Domain-warped second pass → organic, cloud-like shapes.
-    float n2 = fbm(uv * 2.5 + vec2(5.2, 1.3) + n1 * 0.4);
+    float n2 = fbm(uv * ${f(NEBULA_FBM_FREQ)} + vec2(5.2, 1.3) + n1 * 0.4);
 
     // Dark red region.
-    vec3 red  = vec3(0.55, 0.05, 0.08) * pow(max(n1 - 0.30, 0.0), 1.5) * 2.2;
+    vec3 red  = ${v3(NEBULA_COLOR_RED)}  * pow(max(n1 - 0.30, 0.0), 1.5) * ${f(NEBULA_CONTRAST)};
     // Dark blue-purple region.
-    vec3 blue = vec3(0.04, 0.08, 0.38) * pow(max(n2 - 0.30, 0.0), 1.5) * 2.2;
+    vec3 blue = ${v3(NEBULA_COLOR_BLUE)} * pow(max(n2 - 0.30, 0.0), 1.5) * ${f(NEBULA_CONTRAST)};
 
     vec3  col   = red + blue;
     float alpha = clamp(length(col) * 2.0, 0.0, 0.80);
@@ -181,15 +230,15 @@ float fbm(vec2 p) {
 }
 
 void main(void) {
-    vec2 uv = (vTextureCoord + uOffset) * 0.85;
+    vec2 uv = (vTextureCoord + uOffset) * ${f(FOG_UV_SCALE)};
 
-    float n = fbm(uv * 3.0);
+    float n = fbm(uv * ${f(FOG_FBM_FREQ)});
     // Hard threshold: only the densest patches become visible wisps.
-    n = pow(max(n - 0.42, 0.0), 1.8) * 4.0;
+    n = pow(max(n - ${f(FOG_THRESHOLD)}, 0.0), 1.8) * 4.0;
 
     // Very dark blue-black colour (just barely visible against black BG).
-    vec3  col   = vec3(0.02, 0.03, 0.07) * n;
-    float alpha = clamp(n * 0.40, 0.0, 0.45);
+    vec3  col   = ${v3(FOG_COLOR)} * n;
+    float alpha = clamp(n * ${f(FOG_OPACITY)}, 0.0, 0.45);
 
     finalColor = vec4(col, alpha);
 }
