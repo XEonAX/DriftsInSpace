@@ -53,6 +53,14 @@ function materialFor(type: string): PhysicsMaterial {
   return MATERIAL_DEFAULT
 }
 
+/** Map raw obstacle friction value back to a named material (for audio routing). */
+export function frictionToMaterial(friction: number): 'rock' | 'metal' | 'ice' | 'default' {
+  if (friction === MATERIAL_ROCK.friction)  return 'rock'
+  if (friction === MATERIAL_METAL.friction) return 'metal'
+  if (friction === MATERIAL_ICE.friction)   return 'ice'
+  return 'default'
+}
+
 // ─── Geometry helpers ────────────────────────────────────────────────────────
 
 /** Closest point on line segment AB to point P */
@@ -317,13 +325,13 @@ export function resolveCollisions(
   state: ShipState,
   details: ShipDetails,
   colliders: ObstacleCollider[],
-): { state: ShipState; hits: Array<{ nx: number; ny: number }> } {
+): { state: ShipState; hits: Array<{ nx: number; ny: number; friction: number; impactSpeed: number }> } {
   let { pos, vel, angle, angVel } = state
   const sr = details.Radius
   // Per-ship material (from ShipDetails JSON), falling back to Spaceship.physicsMaterial2D.
   const shipFriction = details.Friction ?? SHIP_FRICTION_DEFAULT
   const shipBounce   = details.Bounce   ?? SHIP_BOUNCE_DEFAULT
-  const hits: Array<{ nx: number; ny: number }> = []
+  const hits: Array<{ nx: number; ny: number; friction: number; impactSpeed: number }> = []
 
   for (const col of colliders) {
     // Unity Average combine: combined = (ship + obstacle) / 2
@@ -342,7 +350,9 @@ export function resolveCollisions(
     if (!result) continue
 
     const { depth, nx, ny } = result
-    hits.push({ nx, ny })
+    // Pre-collision speed toward surface — used for collision audio volume.
+    const impactSpeed = Math.abs(vel.x * nx + vel.y * ny)
+    hits.push({ nx, ny, friction: col.friction, impactSpeed })
 
     // ── 1. Depenetrate ──────────────────────────────────────────────────────
     pos = {
