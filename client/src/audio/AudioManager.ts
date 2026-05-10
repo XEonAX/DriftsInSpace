@@ -22,19 +22,23 @@ import type { InputState } from '../physics/ShipPhysics'
 
 // ─── Audio file paths ──────────────────────────────────────────────────────
 const SOUNDS = {
-  engine:          '/assets/sounds/engine.wav',
+  engine:          '/assets/sounds/engine.ogg',
   collisionRock:   '/assets/sounds/collision_rock.ogg',
   collisionMetal:  '/assets/sounds/collision_metal.ogg',
   collisionIce:    '/assets/sounds/collision_ice.ogg',
   boostEngine:     '/assets/sounds/boostEngine.ogg',
   attractorEngine: '/assets/sounds/attractorEngine.ogg',
   repulsorEngine:  '/assets/sounds/repulsorEngine.ogg',
+  driftLoop:       '/assets/sounds/driftLoop.ogg',
+  driftStart:      '/assets/sounds/driftStart.ogg',
+  driftFlow:       '/assets/sounds/driftFlow.ogg',
 } as const
 
 // ─── Volume constants (master mixing levels) ──────────────────────────────
 const ENGINE_MASTER    = 0.6   // Unity AudioMixer group scale (engine channel)
 const COLLISION_MASTER = 0.9
 const PROP_MASTER      = 0.7
+const DRIFT_MASTER     = 0.45  // drift is prominent but sits under the engine
 
 // ─── Collision throttle ───────────────────────────────────────────────────
 // Mirror CollisionStaySkips=100 in SpaceshipCollsions.cs:
@@ -60,6 +64,16 @@ export class AudioManager {
   private lastCollisionTime: Record<CollisionMaterial, number> = {
     rock: -Infinity, metal: -Infinity, ice: -Infinity, default: -Infinity,
   }
+
+  // Drift loop — 3 layered channels
+  private driftLoopBuf:  AudioBuffer | null = null
+  private driftStartBuf: AudioBuffer | null = null
+  private driftFlowBuf:  AudioBuffer | null = null
+  private driftLoopNode:  AudioBufferSourceNode | null = null
+  private driftFlowNode:  AudioBufferSourceNode | null = null
+  private driftGain!:     GainNode   // core loop
+  private driftFlowGain!: GainNode   // ambient layer (lower level)
+  private prevDriftScore = 0         // for edge-detection of drift entry
 
   // Prop buffers + looping sources
   private boostEngineBuf:    AudioBuffer | null = null
@@ -87,6 +101,15 @@ export class AudioManager {
     this.engineGain.gain.value = 0.3 * ENGINE_MASTER   // idle volume
     this.engineGain.connect(this.masterGain)
 
+    // Drift channels
+    this.driftGain = this.ctx.createGain()
+    this.driftGain.gain.value = 0
+    this.driftGain.connect(this.masterGain)
+
+    this.driftFlowGain = this.ctx.createGain()
+    this.driftFlowGain.gain.value = 0
+    this.driftFlowGain.connect(this.masterGain)
+
     // Prop channels
     this.boostEngineGain = this.ctx.createGain()
     this.boostEngineGain.gain.value = 0
@@ -109,6 +132,9 @@ export class AudioManager {
       this.load(SOUNDS.boostEngine).then(b => { this.boostEngineBuf = b }),
       this.load(SOUNDS.attractorEngine).then(b => { this.attractorEngineBuf = b }),
       this.load(SOUNDS.repulsorEngine).then(b => { this.repulsorEngineBuf = b }),
+      this.load(SOUNDS.driftLoop).then(b => { this.driftLoopBuf = b }),
+      this.load(SOUNDS.driftStart).then(b => { this.driftStartBuf = b }),
+      this.load(SOUNDS.driftFlow).then(b => { this.driftFlowBuf = b }),    
     ])
 
     this.startEngine()
@@ -121,6 +147,8 @@ export class AudioManager {
 
   destroy(): void {
     this.engineNode?.stop()
+    this.driftLoopNode?.stop()
+    this.driftFlowNode?.stop()
     this.boostEngineNode?.stop()
     this.attractorEngineNode?.stop()
     this.repulsorEngineNode?.stop()
@@ -200,6 +228,57 @@ export class AudioManager {
   }
 
   // ─── Prop sounds ─────────────────────────────────────────────────────────
+
+  // ─── Drift sound (call every render frame) ───────────────────────────────
+
+  /**
+   * Update the drift-loop sound — 3 layers:
+   *   1. driftLoop  — core bandpass whoosh, volume = sqrt(score), pitch = 0.65→1.80
+   *   2. driftFlow  — low ambient layer, volume = score^1.5 * 0.5 (fades in slowly)
+   *   3. driftStart — one-shot entry cue, fired once when score crosses 0.25
+   *
+   * @param score  0 = aligned, 1 = perfect 90° sideslip at speed.
+   */
+  setDrift(score: number): void {
+    // ── Core loop ──────────────────────────────────────────────────────────
+    if (!this.driftLoopNode && this.driftLoopBuf) {
+      this.driftLoopNode = this.makeLooping(this.driftLoopBuf, this.driftGain, 0)
+    }
+    const s     = Math.max(0, Math.min(1, score))
+    const vol   = s * DRIFT_MASTER                      // linear — gentler rise than sqrt
+    const pitch = 0.75 + Math.pow(s, 0.7) * 0.65       // 0.75 → 1.40, less extreme sweep
+    this.driftGain.gain.setTargetAtTime(vol, this.ctx.currentTime, 0.05)
+    if (this.driftLoopNode) {
+      this.driftLoopNode.playbackRate.setTargetAtTime(Math.max(0.1, pitch), this.ctx.currentTime, 0.07)
+    }
+
+    // ── Flow layer ─────────────────────────────────────────────────────────
+    // Fades in more slowly than the core loop — gives depth when drifting hard.
+    if (!this.driftFlowNode && this.driftFlowBuf) {
+      this.driftFlowNode = this.makeLooping(this.driftFlowBuf, this.driftFlowGain, 0)
+    }
+    const flowVol = Math.pow(s, 1.5) * DRIFT_MASTER * 0.55
+    this.driftFlowGain.gain.setTargetAtTime(flowVol, this.ctx.currentTime, 0.12)
+
+    // ── Entry cue — one-shot when crossing threshold ────────────────────────
+    const ENTRY_THRESHOLD = 0.25
+    if (s >= ENTRY_THRESHOLD && this.prevDriftScore < ENTRY_THRESHOLD) {
+      this.playDriftStart()
+    }
+    this.prevDriftScore = s
+  }
+
+  private playDriftStart(): void {
+    if (!this.driftStartBuf) return
+    const gain = this.ctx.createGain()
+    gain.gain.value = 0.7 * DRIFT_MASTER
+    gain.connect(this.masterGain)
+    const src = this.ctx.createBufferSource()
+    src.buffer = this.driftStartBuf
+    src.connect(gain)
+    src.start()
+    src.onended = () => gain.disconnect()
+  }
 
   /**
    * Set boost engine volume by proximity and pitch by current speed.

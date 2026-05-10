@@ -135,6 +135,22 @@ export class Game {
       const speed = Math.sqrt(curr.vel.x ** 2 + curr.vel.y ** 2)
       this.audio.updateEngine(input, speed, curr.angVel, elapsed)
 
+      // Drift score: |heading × vel_normalized| — 0 when aligned, 1 at 90° sideslip.
+      // Weighted by speed so slow ships don't trigger it (ramp 0→1 from 1–5 u/s).
+      // Forward world vector = (-sin(a), cos(a)) — matches ShipPhysics rotation matrix.
+      const hx = -Math.sin(curr.angle)   // heading vector (angle=0 → +Y)
+      const hy =  Math.cos(curr.angle)
+      let driftScore = 0
+      if (speed > 0.5) {
+        const vxn = curr.vel.x / speed
+        const vyn = curr.vel.y / speed
+        const cross = hx * vyn - hy * vxn        // sin(angle between heading and vel)
+        const speedW = Math.max(0, Math.min(1, (speed - 1) / 4))   // 0 at 1 u/s, 1 at 5 u/s
+        const surge = Math.max(0, Math.min(1, input.surge))
+        driftScore = Math.abs(cross) * speedW * surge
+      }
+      this.audio.setDrift(driftScore)
+
       // Prop zone proximity (use real physics state, not interpolated)
       let boostProximity    = 0   // 0 = outside, 1 = center, r=2
       let attractorProximity = 0  // r=4

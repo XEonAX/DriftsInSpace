@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>DriftsInSpace — Drift Sound Generator</title>
+  <script src="https://unpkg.com/tone@14.8.49/build/Tone.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Courier New', monospace;
+      background: #06060f; color: #88ff88;
+      padding: 2rem; max-width: 740px; margin: 0 auto;
+    }
+    h1 { color: #44aaff; font-size: 1.3rem; margin-bottom: 0.4rem; }
+    .subtitle { color: #6677aa; font-size: 12px; margin-bottom: 0.3rem; }
+    code { color: #ffaa44; }
+    h2 { color: #44aaff; font-size: 13px; margin: 1.6rem 0 0.6rem;
+         border-bottom: 1px solid #1a2a3a; padding-bottom: 0.3rem; }
+
+    .btn-all {
+      margin: 1rem 0;
+      background: #0a2a1a; color: #44ff88;
+      border: 1px solid #44ff88; padding: 0.55rem 1.4rem;
+      font-family: inherit; font-size: 14px; cursor: pointer;
+    }
+    .btn-all:hover:not(:disabled) { background: #1a3a2a; }
+
+    .sound-row { display: flex; align-items: flex-start; gap: 1rem; margin: 0.55rem 0; }
+    .sound-row button {
+      flex-shrink: 0; min-width: 160px;
+      background: #0a1a2a; color: #88ff88;
+      border: 1px solid #44aaff; padding: 0.35rem 0.8rem;
+      font-family: inherit; font-size: 12px; cursor: pointer;
+    }
+    .sound-row button:hover:not(:disabled) { background: #1a2a3a; }
+
+    .desc { color: #7788aa; font-size: 11px; line-height: 1.5; padding-top: 0.2rem; }
+    .desc b { color: #aabbcc; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    #log {
+      margin-top: 1.5rem;
+      background: #03030a; border: 1px solid #1a2a3a;
+      padding: 0.8rem 1rem; min-height: 90px;
+      font-size: 11px; color: #99aabb;
+      white-space: pre-wrap; line-height: 1.6;
+    }
+
+    .note {
+      margin-top: 1.4rem; padding: 0.7rem 1rem;
+      border: 1px solid #2a3a2a; background: #060f06;
+      font-size: 11px; color: #66aa66; line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <h1>DriftsInSpace — Drift Sound Generator</h1>
+  <p class="subtitle">
+    Renders drift sound layers offline via Tone.js synthesis — no microphone, no recording latency.
+    Downloads 16-bit PCM WAV files ready to drop into
+    <code>client/public/assets/sounds/</code>.
+  </p>
+
+  <button class="btn-all" id="btn-all">⚡ Generate &amp; Download All 3</button>
+
+  <h2>Individual sounds</h2>
+
+  <div class="sound-row">
+    <button id="btn-loop">driftLoop.wav</button>
+    <div class="desc">
+      <b>3 s · core drift loop.</b>
+      Pink noise through <em>two</em> bandpass filters at different LFO rates (0.48&thinsp;Hz / 0.37&thinsp;Hz)
+      creating organic flanging/beating as their sweeps cross.
+      Under them: 3 detuned sines (51, 54, 58&thinsp;Hz) tremoloed at 3.8&thinsp;Hz — the ship's energy field pulsing.
+      Top layer: barely-audible white-noise sizzle above 5&thinsp;kHz. All seamlessly loopable.
+    </div>
+  </div>
+
+  <div class="sound-row">
+    <button id="btn-start">driftStart.wav</button>
+    <div class="desc">
+      <b>0.7 s · entry whoosh.</b>
+      Pink noise through a <em>wide</em> lowpass (Q=0.4) that sweeps 200→3800→1100&thinsp;Hz —
+      air rushing as the ship breaks traction then settles sideways.
+      Brown noise sub-layer adds warm body to the rush.
+      No tight resonance — broad and airy.
+    </div>
+  </div>
+
+  <div class="sound-row">
+    <button id="btn-flow">driftFlow.wav</button>
+    <div class="desc">
+      <b>4 s · flow layer.</b>
+      3 layers at irrational LFO rates so they never sync up:
+      brown noise → lowpass (0.17&thinsp;Hz), pink noise → narrow bandpass (0.11&thinsp;Hz),
+      and a 68&thinsp;Hz triangle sub-wave with a very slow volume LFO (0.07&thinsp;Hz) — felt more than heard.
+      Together they breathe like deep-space turbulence. Seamlessly loopable.
+    </div>
+  </div>
+
+  <div id="log">Ready. Click a button to generate.</div>
+
+  <div class="note">
+    After downloading, place the three .wav files in
+    <code>client/public/assets/sounds/</code>.
+    The AudioManager can then load all three and layer them proportionally to the drift score.
+  </div>
+
+  <script>
+    // ─── Logging ────────────────────────────────────────────────────────────────
+    const log = document.getElementById('log')
+    const logLine = (msg) => { log.textContent += '\n' + msg; log.scrollTop = 9999 }
+    const logClear = ()    => { log.textContent = '' }
+
+    // ─── WAV encoder (16-bit PCM, little-endian) ────────────────────────────────
+    function encodeWav(audioBuf) {
+      const numCh      = audioBuf.numberOfChannels
+      const sr         = audioBuf.sampleRate
+      const bitDepth   = 16
+      const bps        = bitDepth / 8
+      const blockAlign = numCh * bps
+
+      // Interleave all channels into one Float32 array
+      const interleaved = new Float32Array(audioBuf.length * numCh)
+      for (let ch = 0; ch < numCh; ch++) {
+        const src = audioBuf.getChannelData(ch)
+        for (let i = 0; i < audioBuf.length; i++) {
+          interleaved[i * numCh + ch] = src[i]
+        }
+      }
+
+      // Convert float32 → int16
+      const pcm = new Int16Array(interleaved.length)
+      for (let i = 0; i < interleaved.length; i++) {
+        const s = Math.max(-1, Math.min(1, interleaved[i]))
+        pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF
+      }
+
+      // Build WAV container
+      const dataSize = pcm.byteLength
+      const wav = new ArrayBuffer(44 + dataSize)
+      const v   = new DataView(wav)
+      const str = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)) }
+
+      str(0, 'RIFF');  v.setUint32(4, 36 + dataSize, true)
+      str(8, 'WAVE');  str(12, 'fmt ')
+      v.setUint32(16, 16, true)           // fmt chunk size
+      v.setUint16(20, 1,  true)           // PCM = 1
+      v.setUint16(22, numCh, true)
+      v.setUint32(24, sr, true)
+      v.setUint32(28, sr * blockAlign, true) // byte rate
+      v.setUint16(32, blockAlign, true)
+      v.setUint16(34, bitDepth, true)
+      str(36, 'data'); v.setUint32(40, dataSize, true)
+      new Int16Array(wav, 44).set(pcm)
+      return wav
+    }
+
+    // ─── Download helper ────────────────────────────────────────────────────────
+    function download(filename, arrayBuf) {
+      const blob = new Blob([arrayBuf], { type: 'audio/wav' })
+      const url  = URL.createObjectURL(blob)
+      const a    = Object.assign(document.createElement('a'), { href: url, download: filename })
+      a.click()
+      setTimeout(() => URL.revokeObjectURL(url), 6000)
+    }
+
+    // ─── Sound generators ────────────────────────────────────────────────────────
+
+    /**
+     * driftLoop.wav — 3 s, seamlessly loopable.
+     *
+     * 3 layers:
+     *   L1: Pink noise → two bandpass filters at slightly different LFO rates (organic beating).
+     *   L2: 3 detuned sines at 51/54/58 Hz with fast tremolo — "energy field" hum.
+     *   L3: White noise → steep highpass at 5 kHz — subtle speed sizzle.
+     */
+    async function genDriftLoop() {
+      logLine('Rendering driftLoop.wav (3 s)…')
+      const buf = await Tone.Offline(() => {
+        // Master fade — seamless loop
+        const master = new Tone.Gain(0).toDestination()
+        master.gain.setValueAtTime(0, 0)
+        master.gain.linearRampToValueAtTime(1, 0.2)
+        master.gain.setValueAtTime(1, 2.8)
+        master.gain.linearRampToValueAtTime(0, 3.0)
+
+        // ── L1: Dual bandpass — organic flanging/beating from different LFO rates ──
+        // Different start phases (0 vs 0.5s) mean they sweep in opposite directions initially.
+        const noise1 = new Tone.Noise('pink')
+        const bp1a = new Tone.Filter({ type: 'bandpass', frequency: 1600, Q: 1.1 })
+        const bp1b = new Tone.Filter({ type: 'bandpass', frequency: 1400, Q: 0.9 })
+        const lfo1a = new Tone.LFO({ frequency: 0.48, min: 700, max: 2800 }).start(0)
+        const lfo1b = new Tone.LFO({ frequency: 0.37, min: 600, max: 2400 }).start(0.5)
+        lfo1a.connect(bp1a.frequency)
+        lfo1b.connect(bp1b.frequency)
+        const ga = new Tone.Gain(0.18)
+        const gb = new Tone.Gain(0.14)
+        noise1.connect(bp1a); bp1a.connect(ga); ga.connect(master)
+        noise1.connect(bp1b); bp1b.connect(gb); gb.connect(master)
+        noise1.start(0)
+
+        // ── L2: Energy hum — 3 detuned sines, fast tremolo ──
+        const osc1 = new Tone.Oscillator({ type: 'sine', frequency: 54   })
+        const osc2 = new Tone.Oscillator({ type: 'sine', frequency: 58.5 })
+        const osc3 = new Tone.Oscillator({ type: 'sine', frequency: 51.5 })
+        const humOut = new Tone.Gain(0)  // LFO drives this to [0.05, 0.10]
+        const humLFO = new Tone.LFO({ frequency: 3.8, min: 0.05, max: 0.10 }).start(0)
+        humLFO.connect(humOut.gain)
+        osc1.connect(humOut); osc2.connect(humOut); osc3.connect(humOut)
+        humOut.connect(master)
+        osc1.start(0); osc2.start(0); osc3.start(0)
+
+        // ── L3: Speed sizzle — very subtle air texture above 5 kHz ──
+        const noise2 = new Tone.Noise('white')
+        const hp = new Tone.Filter({ type: 'highpass', frequency: 5500, Q: 0.5 })
+        const g3 = new Tone.Gain(0.012)  // kept barely audible — texture not hiss
+        noise2.chain(hp, g3, master)
+        noise2.start(0)
+      }, 3, 1, 44100)
+
+      download('driftLoop.wav', encodeWav(buf.get()))
+      logLine('✓  driftLoop.wav')
+    }
+
+    /**
+     * driftStart.wav — 0.6 s, one-shot entry cue.
+     *
+     * Pink noise through a bandpass that spools up (800→2600 Hz in 0.1s) like
+     * a turbine breaking traction, then falls smoothly to 600 Hz as the drift settles.
+     * Q narrows on entry (tight = purposeful) then broadens (open = flowing).
+     * A soft triangle chirp at 350 Hz adds body without harshness.
+     */
+    async function genDriftStart() {
+      logLine('Rendering driftStart.wav (0.7 s)…')
+      const buf = await Tone.Offline(() => {
+        // ── Main whoosh: pink noise → wide lowpass sweep (dark → bright → settle) ──
+        const noise1 = new Tone.Noise('pink')
+        const lp1 = new Tone.Filter({ type: 'lowpass', frequency: 200, Q: 0.4 })
+        lp1.frequency.setValueAtTime(200, 0)
+        lp1.frequency.exponentialRampToValueAtTime(3800, 0.16)  // whoosh peak
+        lp1.frequency.exponentialRampToValueAtTime(1100, 0.65)  // settle into drift
+        const env1 = new Tone.AmplitudeEnvelope({
+          attack: 0.018, decay: 0.28, sustain: 0.38, release: 0.22,
+        })
+        env1.set({ volume: -1 })
+        noise1.chain(lp1, env1, Tone.getDestination())
+        noise1.start(0)
+        env1.triggerAttackRelease(0.55, 0)
+
+        // ── Body: brown noise → lowpass for warm sub-rush ──
+        const noise2 = new Tone.Noise('brown')
+        const lp2 = new Tone.Filter({ type: 'lowpass', frequency: 150, Q: 0.3 })
+        lp2.frequency.setValueAtTime(150, 0)
+        lp2.frequency.exponentialRampToValueAtTime(600, 0.20)
+        lp2.frequency.exponentialRampToValueAtTime(280, 0.65)
+        const g2 = new Tone.Gain(0.35)
+        const env2 = new Tone.AmplitudeEnvelope({
+          attack: 0.03, decay: 0.35, sustain: 0.25, release: 0.22,
+        })
+        noise2.chain(lp2, g2, env2, Tone.getDestination())
+        noise2.start(0)
+        env2.triggerAttackRelease(0.5, 0)
+      }, 0.7, 1, 44100)
+
+      download('driftStart.wav', encodeWav(buf.get()))
+      logLine('✓  driftStart.wav')
+    }
+
+    /**
+     * driftFlow.wav — 4 s, seamlessly loopable ambient layer.
+     *
+     * 3 layers at irrational LFO rates so they never align and repeat:
+     *   L1: Brown noise → lowpass (LFO 0.17 Hz, 250–680 Hz) — deep rumble foundation.
+     *   L2: Pink noise → narrow bandpass (LFO 0.11 Hz, 380–1100 Hz) — mid whorl.
+     *   L3: Triangle sub-oscillator at 68 Hz (LFO 0.07 Hz on volume) — felt more than heard.
+     * Three irrational rates create an evolving, breathing turbulence.
+     */
+    async function genDriftFlow() {
+      logLine('Rendering driftFlow.wav (4 s)…')
+      const buf = await Tone.Offline(() => {
+        // Master fade — seamless loop
+        const master = new Tone.Gain(0).toDestination()
+        master.gain.setValueAtTime(0, 0)
+        master.gain.linearRampToValueAtTime(1, 0.35)
+        master.gain.setValueAtTime(1, 3.65)
+        master.gain.linearRampToValueAtTime(0, 4.0)
+
+        // ── L1: Deep rumble — brown noise → lowpass, slow LFO ──
+        const noise1 = new Tone.Noise('brown')
+        const lp = new Tone.Filter({ type: 'lowpass', frequency: 400, Q: 0.5 })
+        const lfo1 = new Tone.LFO({ frequency: 0.17, min: 250, max: 680 }).start(0)
+        lfo1.connect(lp.frequency)
+        const g1 = new Tone.Gain(0.30)
+        noise1.chain(lp, g1, master)
+        noise1.start(0)
+
+        // ── L2: Mid whorl — pink noise → narrow bandpass, different LFO rate ──
+        // Different rate (0.11 vs 0.17) means they drift in and out of phase organically.
+        const noise2 = new Tone.Noise('pink')
+        const bp = new Tone.Filter({ type: 'bandpass', frequency: 650, Q: 2.8 })
+        const lfo2 = new Tone.LFO({ frequency: 0.11, min: 380, max: 1100 }).start(0.9)
+        lfo2.connect(bp.frequency)
+        const g2 = new Tone.Gain(0.14)
+        noise2.chain(bp, g2, master)
+        noise2.start(0)
+
+        // ── L3: Sub-triangle — felt vibration, very slow LFO breathe ──
+        const sub = new Tone.Oscillator({ type: 'triangle', frequency: 68 })
+        const subGain = new Tone.Gain(0)  // LFO drives to [0.02, 0.07]
+        const subLFO  = new Tone.LFO({ frequency: 0.07, min: 0.02, max: 0.07 }).start(1.2)
+        subLFO.connect(subGain.gain)
+        sub.connect(subGain)
+        subGain.connect(master)
+        sub.start(0)
+      }, 4, 1, 44100)
+
+      download('driftFlow.wav', encodeWav(buf.get()))
+      logLine('✓  driftFlow.wav')
+    }
+
+    // ─── Button wiring ────────────────────────────────────────────────────────────
+    const allBtns = () => document.querySelectorAll('button')
+    const lock    = () => allBtns().forEach(b => b.disabled = true)
+    const unlock  = () => allBtns().forEach(b => b.disabled = false)
+
+    async function run(fn) {
+      lock()
+      try {
+        await fn()
+      } catch (e) {
+        logLine('ERROR: ' + e.message)
+        console.error(e)
+      }
+      unlock()
+    }
+
+    document.getElementById('btn-loop').onclick  = () => run(genDriftLoop)
+    document.getElementById('btn-start').onclick = () => run(genDriftStart)
+    document.getElementById('btn-flow').onclick  = () => run(genDriftFlow)
+    document.getElementById('btn-all').onclick   = () => run(async () => {
+      logClear()
+      logLine('Generating all 3 drift sounds…')
+      await genDriftLoop()
+      await genDriftStart()
+      await genDriftFlow()
+      logLine('\nDone. Place the 3 .wav files in client/public/assets/sounds/')
+      // and run for f in driftLoop driftStart driftFlow; do ffmpeg -i "$f.wav" -c:a libvorbis -q:a 6 "$f.ogg"; done
+      logLine('and run `for f in driftLoop driftStart driftFlow; do ffmpeg -i "$f.wav" -c:a libvorbis -q:a 6 "$f.ogg"; done` to convert to .ogg (optional, for smaller file size).')
+    })
+  </script>
+</body>
+</html>
