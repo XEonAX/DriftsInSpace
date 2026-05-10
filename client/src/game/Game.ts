@@ -150,6 +150,7 @@ export class Game {
         driftScore = Math.abs(cross) * speedW * surge
       }
       this.audio.setDrift(driftScore)
+      this.renderer.setDrift(driftScore)
 
       // Prop zone proximity (use real physics state, not interpolated)
       let boostProximity    = 0   // 0 = outside, 1 = center, r=2

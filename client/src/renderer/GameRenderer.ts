@@ -45,6 +45,8 @@ export class GameRenderer {
   private shieldHitSprites: Sprite[] = []   // 3 round-robin collision ring instances
   private shieldHitAlphas: number[] = []    // per-instance fade state
   private shieldHitIdx = 0                  // next instance to use
+  private cometSprite!: Sprite             // drift comet trail
+  private cometAlpha = 0                   // smoothed target alpha
   private lastInput: InputState = { torque: 0, surge: 0, strafe: 0 }
   private debugText!: Text
 
@@ -96,6 +98,14 @@ export class GameRenderer {
       this.shieldHitAlphas.push(0)
     }
 
+    // ─── Comet trail (drift FX) — behind ship, anchor at circular head ──────
+    const cometTexture = await Assets.load('/assets/textures/Comet300.png')
+    this.cometSprite = new Sprite(cometTexture)
+    // Anchor at center of circular top: (0.5, radius/height) where radius = width/2
+    this.cometSprite.anchor.set(0.5, cometTexture.width / (2 * cometTexture.height))
+    this.cometSprite.alpha = 0
+    this.worldContainer.addChild(this.cometSprite)
+
     // ─── Thruster FX — parented to shipSprite so it inherits its transform ──
     this.thrusterFX = new ThrusterFX(this.shipSprite)
     await this.thrusterFX.init()
@@ -139,6 +149,11 @@ export class GameRenderer {
     }
     // Compensate so ThrusterFX children are sized in screen pixels, not ship-sprite-local pixels
     this.thrusterFX.setParentScale(this.shipSprite.scale.x, this.shipSprite.scale.y)
+  }
+
+  /** Drive the comet trail opacity. score 0–1 from drift calculation. */
+  setDrift(score: number): void {
+    this.cometAlpha = Math.max(0, Math.min(1, score))
   }
 
   /** Signal a collision with contact normal (nx,ny) pointing from obstacle to ship. */
@@ -393,6 +408,27 @@ export class GameRenderer {
     this.shipSprite.position.set(shipScreenX, shipScreenY)
     this.shipSprite.rotation = gameAngleToPixi(ship.angle)
     this.shieldSprite.position.set(shipScreenX, shipScreenY)
+
+    // ─── Comet trail — oriented in velocity direction, tail drags behind ─────
+    // Sprite anchor is at the circular head; head placed at ship center.
+    // rotation: sprite local +Y points in velocity direction (screen-space).
+    // gameAngleToPixi(atan2(vx, vy)) maps world-up velocity to screen rotation.
+    {
+      const speed2d = Math.sqrt(ship.vel.x ** 2 + ship.vel.y ** 2)
+      const FADE_IN  = 6.0   // alpha units/s — fast in
+      const FADE_OUT = 2.5   // alpha units/s — slower out
+      const target = this.cometAlpha
+      const prev   = this.cometSprite.alpha
+      const rate   = target > prev ? FADE_IN : FADE_OUT
+      this.cometSprite.alpha = prev + (target - prev) * Math.min(1, rate * dt)
+      this.cometSprite.position.set(shipScreenX, shipScreenY)
+      if (speed2d > 0.01) {
+        this.cometSprite.rotation = Math.atan2(ship.vel.x, ship.vel.y)
+      }
+      // Scale with speed: comet grows slightly as ship moves faster
+      const s = 1 + Math.min(1, speed2d / 10) * 0.4
+      this.cometSprite.scale.set(s * PIXELS_PER_UNIT / 128, s * PIXELS_PER_UNIT / 128)
+    }
 
     // Collision rings: each fades independently
     for (let i = 0; i < this.shieldHitSprites.length; i++) {
