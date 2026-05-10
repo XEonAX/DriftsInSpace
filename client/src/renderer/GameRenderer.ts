@@ -14,6 +14,7 @@ import { OBSTACLE_SIZE, quatToAngle } from '../data/levels'
 import { ThrusterFX } from './ThrusterFX'
 import type { ShipSkinData } from './ThrusterFX'
 import { BackgroundRenderer } from './BackgroundRenderer'
+import { PropParticleFX } from './PropParticleFX'
 
 /**
  * Convert game angle (radians, CCW from +Y) to PixiJS sprite rotation.
@@ -39,6 +40,7 @@ export class GameRenderer {
   private obstacleSprites: Sprite[] = []
   private propSprites: Sprite[] = []
   private thrusterFX!: ThrusterFX
+  private propParticles = new PropParticleFX()
   private shieldSprite!: Sprite          // static ring, always visible
   private shieldHitSprites: Sprite[] = []   // 3 round-robin collision ring instances
   private shieldHitAlphas: number[] = []    // per-instance fade state
@@ -97,6 +99,9 @@ export class GameRenderer {
     // ─── Thruster FX — parented to shipSprite so it inherits its transform ──
     this.thrusterFX = new ThrusterFX(this.shipSprite)
     await this.thrusterFX.init()
+
+    // ─── Prop particle FX — texture generated here; container z-ordered in loadLevel ──
+    await this.propParticles.init(this.app)
 
     // ─── Debug overlay ─────────────────────────────────────────────────────
     const style = new TextStyle({ fill: '#88ff88', fontSize: 12, fontFamily: 'monospace' })
@@ -184,6 +189,14 @@ export class GameRenderer {
         this.propSprites.push(s)
       }
     }
+
+    // ─── Particle FX container ─ inserted at the very bottom so particles
+    // appear behind prop rings, obstacles, and the ship. ──────────────────
+    if (this.propParticles.container.parent) {
+      this.propParticles.container.parent.removeChild(this.propParticles.container)
+    }
+    this.worldContainer.addChildAt(this.propParticles.container, 0)
+    this.propParticles.loadLevel(level.Props)
   }
 
   private createObstacleSprite(obs: Obstacle, texture: Texture): Sprite {
@@ -391,6 +404,9 @@ export class GameRenderer {
       }
     }
 
+    // ─── Prop particle FX ────────────────────────────────────────────────────
+    this.propParticles.update(dt)
+
     // ─── Thruster FX (parented to shipSprite — position/rotation inherited) ─
     this.thrusterFX.update(this.lastInput, dt)
 
@@ -409,6 +425,7 @@ export class GameRenderer {
 
   destroy(): void {
     this.thrusterFX.destroy()
+    this.propParticles.destroy()
     this.bgRenderer.destroy()
     this.app.destroy()
   }
