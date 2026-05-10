@@ -280,6 +280,8 @@ export class GameRenderer {
   private smoothedZoom = 1.0
   private cameraReady  = false
   private lastRenderTime = 0
+  private prevSpeed  = 0
+  private prevAngVel = 0
 
   render(ship: ShipState): void {
     const W = this.app.screen.width
@@ -393,11 +395,16 @@ export class GameRenderer {
     this.thrusterFX.update(this.lastInput, dt)
 
     // ─── Debug text ────────────────────────────────────────────────────────
-    const speed = Math.sqrt(ship.vel.x ** 2 + ship.vel.y ** 2)
+    const speed    = Math.sqrt(ship.vel.x ** 2 + ship.vel.y ** 2)
+    const accel    = dt > 0 ? (speed - this.prevSpeed) / dt : 0
+    const angDeg   = (ship.angle  * 180) / Math.PI
+    const omegaDeg = (ship.angVel * 180) / Math.PI
+    const alphaDeg = dt > 0 ? ((ship.angVel - this.prevAngVel) * 180) / Math.PI / dt : 0
+    this.prevSpeed  = speed
+    this.prevAngVel = ship.angVel
     this.debugText.text =
-      `pos: (${ship.pos.x.toFixed(1)}, ${ship.pos.y.toFixed(1)})  ` +
-      `spd: ${speed.toFixed(1)} u/s  ` +
-      `ang: ${((ship.angle * 180) / Math.PI).toFixed(0)}°`
+      `pos: (${ship.pos.x.toFixed(1)}, ${ship.pos.y.toFixed(1)})  spd: ${speed.toFixed(1)} u/s  accel: ${accel.toFixed(1)} u/s²\n` +
+      `ang: ${angDeg.toFixed(0)}°  ω: ${omegaDeg.toFixed(1)}°/s  α: ${alphaDeg.toFixed(1)}°/s²`
   }
 
   destroy(): void {

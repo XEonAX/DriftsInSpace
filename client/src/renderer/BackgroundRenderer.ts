@@ -29,7 +29,7 @@ const NEBULA_COLOR_RED  = [0.55, 0.05, 0.08] as const  // dark crimson region
 const NEBULA_COLOR_BLUE = [0.04, 0.08, 0.38] as const  // dark blue-purple region
 
 // Fog
-const FOG_COLOR = [0.02, 0.03, 0.07] as const  // near-black dark wisps
+const FOG_COLOR = [0, 0, 0] as const  // near-black dark wisps
 
 // ─── Background scale / density constants ─────────────────────────────────
 
@@ -52,13 +52,15 @@ const NEBULA_CONTRAST  = 2.2
 
 // Fog
 // Overall UV scale — lower = larger fog patches.
-const FOG_UV_SCALE   = 0.85
+const FOG_UV_SCALE   = 2
 // FBM frequency on top of UV scale.
 const FOG_FBM_FREQ   = 3.0
 // Threshold below which fog is invisible (0–1). Higher = sparser wisps.
-const FOG_THRESHOLD  = 0.42
+const FOG_THRESHOLD  = 0.4
 // Alpha multiplier — controls how opaque the fog wisps are.
-const FOG_OPACITY    = 0.40
+const FOG_OPACITY = 0.4
+// Max Fog alpha is also clamped in shader to prevent excessively bright wisps when contrast is high.
+const FOG_MAX_ALPHA = 0.5
 
 /** Format a colour constant as a GLSL vec3 literal. */
 function v3(c: readonly [number, number, number]): string {
@@ -238,7 +240,7 @@ void main(void) {
 
     // Very dark blue-black colour (just barely visible against black BG).
     vec3  col   = ${v3(FOG_COLOR)} * n;
-    float alpha = clamp(n * ${f(FOG_OPACITY)}, 0.0, 0.45);
+    float alpha = clamp(n * ${f(FOG_OPACITY)}, 0.0, ${f(FOG_MAX_ALPHA)});
 
     finalColor = vec4(col, alpha);
 }
@@ -248,7 +250,7 @@ void main(void) {
 const PARALLAX_RATES = [
   0.03,  // stars  — vast distance, almost stationary
   0.08,  // nebula — mid range
-  0.15,  // fog    — closest; matches the old TilingSprite rate
+  0.4,  // fog    — closest; matches the old TilingSprite rate
 ] as const
 
 const LAYER_NAMES  = ['bg-stars', 'bg-nebula', 'bg-fog'] as const
