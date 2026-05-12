@@ -32,6 +32,25 @@ function worldToLocal(wx: number, wy: number): { x: number; y: number } {
   return { x: wx * PIXELS_PER_UNIT, y: -wy * PIXELS_PER_UNIT }
 }
 
+interface RemotePlayerView {
+  shipSprite:   Sprite
+  nameLabel:    Text
+  shieldSprite: Sprite
+  thrusterFX:   ThrusterFX
+  // Two state snapshots for interpolation
+  stateA: RemoteState
+  stateB: RemoteState
+  hasState: boolean
+  lastInput: InputState
+}
+
+interface RemoteState {
+  posX: number; posY: number
+  angle: number
+  serverTimeMs: number
+  input: InputState
+}
+
 export class GameRenderer {
   app!: Application
   private worldContainer!: Container
@@ -48,6 +67,9 @@ export class GameRenderer {
   private cometSprite!: Sprite             // drift comet trail
   private cometAlpha = 0                   // smoothed target alpha
   private lastInput: InputState = { torque: 0, surge: 0, strafe: 0 }
+  // Remote players keyed by MPId
+  private remoteShipTextures: Map<string, Texture> = new Map()
+  private remotePlayers: Map<number, RemotePlayerView> = new Map()
   private debugText!: Text
 
   async init(canvas: HTMLCanvasElement, shipId: string): Promise<void> {
@@ -310,6 +332,8 @@ export class GameRenderer {
   private lastRenderTime = 0
   private prevSpeed  = 0
   private prevAngVel = 0
+  /** Last server time received — used to interpolate remote players. */
+  serverTimeMs = 0
 
   render(ship: ShipState): void {
     const W = this.app.screen.width
@@ -440,6 +464,9 @@ export class GameRenderer {
       }
     }
 
+    // ─── Remote players ────────────────────────────────────────────────────
+    this.renderRemotePlayers(this.serverTimeMs, dt)
+
     // ─── Prop particle FX ────────────────────────────────────────────────────
     this.propParticles.update(dt)
 
@@ -459,10 +486,140 @@ export class GameRenderer {
       `ang: ${angDeg.toFixed(0)}°  ω: ${omegaDeg.toFixed(1)}°/s  α: ${alphaDeg.toFixed(1)}°/s²`
   }
 
+  // ─── Remote player management ─────────────────────────────────────────────
+
+  /** Load a ship texture by skinId (cached). */
+  private async loadRemoteTexture(skinId: string): Promise<Texture> {
+    if (!this.remoteShipTextures.has(skinId)) {
+      const tex = await Assets.load(`/assets/ships/${skinId}.png`)
+      this.remoteShipTextures.set(skinId, tex)
+    }
+    return this.remoteShipTextures.get(skinId)!
+  }
+
+  async addRemotePlayer(mpId: number, displayName: string, skinId: string): Promise<void> {
+    if (this.remotePlayers.has(mpId)) return
+
+    const tex = await this.loadRemoteTexture(skinId)
+
+    // Shield ring
+    const shieldTex = await Assets.load('/assets/textures/Shield128.png')
+    const shield = new Sprite(shieldTex)
+    shield.anchor.set(0.5)
+    shield.tint = 0x4488ff
+    shield.alpha = 0.6
+    shield.width = shield.height = PIXELS_PER_UNIT * 1.26 * 2  // approx radius 0.63 * 2
+    this.worldContainer.addChildAt(shield, 0)
+
+    const ship = new Sprite(tex)
+    ship.anchor.set(0.5)
+    ship.width = ship.height = PIXELS_PER_UNIT
+    this.worldContainer.addChild(ship)
+
+    // Thruster FX parented to remote ship sprite
+    const thrusterFX = new ThrusterFX(ship)
+    await thrusterFX.init()
+    thrusterFX.setParentScale(ship.scale.x, ship.scale.y)
+    // Load skin data for this ship
+    try {
+      const skinData: ShipSkinData = await Assets.load(`/assets/ships/${skinId}.skin.json`)
+      thrusterFX.loadSkin(skinData)
+    } catch { /* no skin data — thrusters stay empty */ }
+
+    const label = new Text({
+      text: displayName,
+      style: new TextStyle({ fill: '#ccddff', fontSize: 11, fontFamily: 'monospace' }),
+    })
+    label.anchor.set(0.5, 1)
+    this.app.stage.addChild(label)
+
+    const deadInput: InputState = { torque: 0, surge: 0, strafe: 0 }
+    const deadState: RemoteState = { posX: 0, posY: 0, angle: 0, serverTimeMs: 0, input: deadInput }
+    this.remotePlayers.set(mpId, {
+      shipSprite:   ship,
+      shieldSprite: shield,
+      nameLabel:    label,
+      thrusterFX,
+      stateA: { ...deadState },
+      stateB: { ...deadState },
+      hasState: false,
+      lastInput: { ...deadInput },
+    })
+  }
+
+  removeRemotePlayer(mpId: number): void {
+    const v = this.remotePlayers.get(mpId)
+    if (!v) return
+    v.thrusterFX.destroy()
+    this.worldContainer.removeChild(v.shipSprite)
+    this.worldContainer.removeChild(v.shieldSprite)
+    this.app.stage.removeChild(v.nameLabel)
+    this.remotePlayers.delete(mpId)
+  }
+
+  /**
+   * Feed a server-broadcast state snapshot for one remote player.
+   * Called when a PlayerStates packet arrives.
+   */
+  receiveRemoteState(mpId: number, posX: number, posY: number, angle: number, serverTimeMs: number, input: InputState): void {
+    const v = this.remotePlayers.get(mpId)
+    if (!v) return
+    v.stateA = { ...v.stateB }
+    v.stateB = { posX, posY, angle, serverTimeMs, input }
+    v.hasState = true
+  }
+
+  /** Render all remote players, interpolating between the last two received states. */
+  private renderRemotePlayers(serverTimeMs: number, dt: number): void {
+    for (const v of this.remotePlayers.values()) {
+      if (!v.hasState) continue
+
+      // Interpolate between A and B using the server time window
+      const window = v.stateB.serverTimeMs - v.stateA.serverTimeMs
+      const t = window > 0
+        ? Math.max(0, Math.min(1, (serverTimeMs - v.stateA.serverTimeMs) / window))
+        : 1
+
+      const posX  = v.stateA.posX  + (v.stateB.posX  - v.stateA.posX)  * t
+      const posY  = v.stateA.posY  + (v.stateB.posY  - v.stateA.posY)  * t
+      // Angle: shortest-path lerp
+      let da = v.stateB.angle - v.stateA.angle
+      while (da >  Math.PI) da -= Math.PI * 2
+      while (da < -Math.PI) da += Math.PI * 2
+      const angle = v.stateA.angle + da * t
+
+      const sx = posX * PIXELS_PER_UNIT
+      const sy = -posY * PIXELS_PER_UNIT
+      v.shipSprite.position.set(sx, sy)
+      v.shipSprite.rotation = gameAngleToPixi(angle)
+      v.shieldSprite.position.set(sx, sy)
+
+      // Lerp toward the new input so thruster power is smooth
+      const LI = 1 - Math.exp(-dt / 0.08)  // ~80ms smoothing
+      v.lastInput.surge  += (v.stateB.input.surge  - v.lastInput.surge)  * LI
+      v.lastInput.strafe += (v.stateB.input.strafe - v.lastInput.strafe) * LI
+      v.lastInput.torque += (v.stateB.input.torque - v.lastInput.torque) * LI
+      v.thrusterFX.update(v.lastInput, dt)
+
+      // Name label: project world → screen
+      const wx = this.worldContainer.position.x + sx * this.worldContainer.scale.x
+      const wy = this.worldContainer.position.y + sy * this.worldContainer.scale.y
+      const labelOffsetY = -PIXELS_PER_UNIT * 0.9 * this.worldContainer.scale.y
+      v.nameLabel.position.set(wx, wy + labelOffsetY)
+    }
+  }
+
   destroy(): void {
     this.thrusterFX.destroy()
     this.propParticles.destroy()
     this.bgRenderer.destroy()
+    for (const v of this.remotePlayers.values()) {
+      v.thrusterFX.destroy()
+      this.worldContainer.removeChild(v.shipSprite)
+      this.worldContainer.removeChild(v.shieldSprite)
+      this.app.stage.removeChild(v.nameLabel)
+    }
+    this.remotePlayers.clear()
     this.app.destroy()
   }
 }

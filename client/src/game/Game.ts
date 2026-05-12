@@ -9,6 +9,7 @@ import type { ObstacleCollider, ForceZone, PropState } from '../physics/Collisio
 import type { Prop } from '../data/levels'
 import { AudioManager } from '../audio/AudioManager'
 import type { CollisionMaterial } from '../audio/AudioManager'
+import { NetClient } from '../net/NetClient'
 
 export class Game {
   private renderer = new GameRenderer()
@@ -25,10 +26,14 @@ export class Game {
   private props: Prop[] = []
   private propState: PropState = initialPropState()
   private audioStarted = false
+  private net = new NetClient()
+  private netTick = 0
+  private readonly displayName: string
   // No per-prop boolean state needed — all props now use continuous proximity
 
-  constructor(shipId: string, _displayName: string) {
+  constructor(shipId: string, displayName: string) {
     this.shipId = shipId
+    this.displayName = displayName
   }
 
   async start(): Promise<void> {
@@ -74,6 +79,39 @@ export class Game {
 
     // Store details for use in loop
     this._details = details
+
+    // Connect to multiplayer server (non-blocking — game works offline too)
+    const userId = this.getOrCreateUserId()
+    const wsUrl  = import.meta.env.VITE_WS_URL as string | undefined ?? 'ws://localhost:5839/ws'
+    this.net.connect(wsUrl, userId, this.displayName, this.shipId, {
+      onGalaxy: async (data) => {
+        for (const p of data.players) {
+          await this.renderer.addRemotePlayer(p.mpId, p.displayName, p.skinId)
+        }
+      },
+      onPlayerStates: (data) => {
+        this.renderer.serverTimeMs = data.serverTimeMs
+        for (const s of data.states) {
+          if (s.mpId === this.net.myMPId) continue
+          this.renderer.receiveRemoteState(
+            s.mpId,
+            s.posX / 1000, s.posY / 1000,
+            s.angle / 1000,
+            data.serverTimeMs,
+            { surge: s.surge / 100, strafe: s.strafe / 100, torque: s.turn / 100 },
+          )
+        }
+      },
+      onPlayerJoin: async (player) => {
+        await this.renderer.addRemotePlayer(player.mpId, player.displayName, player.skinId)
+      },
+      onPlayerLeft: (mpId) => {
+        this.renderer.removeRemotePlayer(mpId)
+      },
+      onDisconnected: () => {
+        console.log('Disconnected from server')
+      },
+    })
   }
 
   // Stored after init — avoids closure allocation in loop
@@ -111,6 +149,15 @@ export class Game {
           }
         }
         this.accumulator -= FIXED_DT
+        // Send our state to the server every physics tick (50 Hz)
+        this.net.sendShipUpdate(
+          this.netTick++,
+          this.shipState.pos.x, this.shipState.pos.y,
+          this.shipState.angle,
+          this.shipState.vel.x, this.shipState.vel.y,
+          this.shipState.angVel,
+          input.surge, input.strafe, input.torque,
+        )
       }
     }
 
@@ -198,10 +245,22 @@ export class Game {
     this.rafId = requestAnimationFrame(this.loop)
   }
 
+  /** Stable anonymous user ID, stored in localStorage. */
+  private getOrCreateUserId(): string {
+    const key = 'drifts_user_id'
+    let id = localStorage.getItem(key)
+    if (!id) {
+      id = crypto.randomUUID()
+      localStorage.setItem(key, id)
+    }
+    return id
+  }
+
   stop(): void {
     this.running = false
     cancelAnimationFrame(this.rafId)
     this.input.destroy()
+    this.net.disconnect()
     this.renderer.destroy()
     this.audio.destroy()
   }
