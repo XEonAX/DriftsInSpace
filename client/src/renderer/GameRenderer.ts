@@ -32,23 +32,34 @@ function worldToLocal(wx: number, wy: number): { x: number; y: number } {
   return { x: wx * PIXELS_PER_UNIT, y: -wy * PIXELS_PER_UNIT }
 }
 
+/** Clamp-normalised lerp factor: 0 when v<=a, 1 when v>=b. */
+function inverseLerp(a: number, b: number, v: number): number {
+  return b !== a ? Math.max(0, Math.min(1, (v - a) / (b - a))) : 0
+}
+
+/** One decoded state snapshot stored in the jitter buffer. */
+interface BufferedState {
+  posX: number; posY: number
+  angle: number
+  serverTimeMs: number
+  input: InputState
+}
+
 interface RemotePlayerView {
   shipSprite:   Sprite
   nameLabel:    Text
   shieldSprite: Sprite
   thrusterFX:   ThrusterFX
-  // Two state snapshots for interpolation
-  stateA: RemoteState
-  stateB: RemoteState
-  hasState: boolean
-  lastInput: InputState
-}
-
-interface RemoteState {
-  posX: number; posY: number
-  angle: number
-  serverTimeMs: number
-  input: InputState
+  // ── Jitter buffer (ANXRacers-style adaptive playback) ──────────────────
+  /** FIFO queue of incoming state snapshots, capped at BUFFER_MAX. */
+  buffer:        BufferedState[]
+  /** Last dequeued state — interpolation "from" point. */
+  currentState:  BufferedState | null
+  /** Virtual clock that advances at timespeed × real-dt. */
+  virtualTimeMs: number
+  /** Playback rate: <1 slows down when buffer is thin, >1 speeds up when full. */
+  timespeed:     number
+  lastInput:     InputState
 }
 
 export class GameRenderer {
@@ -534,16 +545,16 @@ export class GameRenderer {
     this.app.stage.addChild(label)
 
     const deadInput: InputState = { torque: 0, surge: 0, strafe: 0 }
-    const deadState: RemoteState = { posX: 0, posY: 0, angle: 0, serverTimeMs: 0, input: deadInput }
     this.remotePlayers.set(mpId, {
       shipSprite:   ship,
       shieldSprite: shield,
       nameLabel:    label,
       thrusterFX,
-      stateA: { ...deadState },
-      stateB: { ...deadState },
-      hasState: false,
-      lastInput: { ...deadInput },
+      buffer:        [],
+      currentState:  null,
+      virtualTimeMs: 0,
+      timespeed:     1,
+      lastInput:     { ...deadInput },
     })
   }
 
@@ -557,6 +568,9 @@ export class GameRenderer {
     this.remotePlayers.delete(mpId)
   }
 
+  // Maximum number of states held per remote player (~1.4 s at 22 Hz)
+  private static readonly BUFFER_MAX = 30
+
   /**
    * Feed a server-broadcast state snapshot for one remote player.
    * Called when a PlayerStates packet arrives.
@@ -564,41 +578,90 @@ export class GameRenderer {
   receiveRemoteState(mpId: number, posX: number, posY: number, angle: number, serverTimeMs: number, input: InputState): void {
     const v = this.remotePlayers.get(mpId)
     if (!v) return
-    v.stateA = { ...v.stateB }
-    v.stateB = { posX, posY, angle, serverTimeMs, input }
-    v.hasState = true
+    if (v.buffer.length >= GameRenderer.BUFFER_MAX) v.buffer.shift()
+    v.buffer.push({ posX, posY, angle, serverTimeMs, input })
   }
 
-  /** Render all remote players, interpolating between the last two received states. */
-  private renderRemotePlayers(serverTimeMs: number, dt: number): void {
+  /**
+   * Render all remote players using a jitter-buffer with adaptive playback speed.
+   *
+   * Ported from ANXRacers RemotePlayer.cs (FixedUpdate + ApplyState):
+   * - Each remote player maintains a FIFO buffer of received state snapshots.
+   * - A per-player virtual clock (`virtualTimeMs`) advances at `timespeed × dt`.
+   * - `timespeed` is adjusted each frame based on buffer health:
+   *     low buffer  → slow down (< 1×) to avoid running out of states
+   *     full buffer → speed up  (> 1×) to drain the backlog
+   * - States are dequeued when virtualTimeMs passes the front of the buffer;
+   *   the renderer interpolates between the last dequeued state and the next.
+   */
+  private renderRemotePlayers(_serverTimeMs: number, dt: number): void {
+    // Target number of buffered states (~135 ms at 22 Hz send rate)
+    const TARGET    = 3
+    const TARGET_HI = TARGET + 6  // above this: max 2× speed-up
+    const TARGET_LO = TARGET - 3  // below this: approaching full stop
+
     for (const v of this.remotePlayers.values()) {
-      if (!v.hasState) continue
+      // ── Bootstrap: wait until we have at least 2 states ─────────────────
+      if (v.currentState === null) {
+        if (v.buffer.length < 2) continue
+        v.currentState  = v.buffer.shift()!
+        v.virtualTimeMs = v.currentState.serverTimeMs
+      }
 
-      // Interpolate between A and B using the server time window
-      const window = v.stateB.serverTimeMs - v.stateA.serverTimeMs
-      const t = window > 0
-        ? Math.max(0, Math.min(1, (serverTimeMs - v.stateA.serverTimeMs) / window))
-        : 1
+      // ── Adaptive playback speed based on buffer health ───────────────────
+      // Mirrors the ANXRacers Mathf.InverseLerp logic exactly.
+      const h = v.buffer.length
+      if (h > TARGET) {
+        v.timespeed = 1 + inverseLerp(TARGET, TARGET_HI, h)  // 1× → 2×
+      } else if (h < TARGET) {
+        v.timespeed = 1 - (1 - inverseLerp(TARGET_LO, TARGET, h))  // ~0× → 1×
+      } else {
+        v.timespeed = 1
+      }
 
-      const posX  = v.stateA.posX  + (v.stateB.posX  - v.stateA.posX)  * t
-      const posY  = v.stateA.posY  + (v.stateB.posY  - v.stateA.posY)  * t
-      // Angle: shortest-path lerp
-      let da = v.stateB.angle - v.stateA.angle
-      while (da >  Math.PI) da -= Math.PI * 2
-      while (da < -Math.PI) da += Math.PI * 2
-      const angle = v.stateA.angle + da * t
+      // ── Advance virtual clock ─────────────────────────────────────────────
+      v.virtualTimeMs += dt * 1000 * v.timespeed
 
+      // ── Drain: advance currentState while virtual time has passed it ──────
+      // Shift buffer[0] → currentState only when virtualTime has moved past it,
+      // so buffer[0] always remains the "next" interpolation target.
+      while (v.buffer.length > 0 && v.virtualTimeMs > v.buffer[0].serverTimeMs) {
+        v.currentState = v.buffer.shift()!
+      }
+
+      // ── Interpolate between currentState and buffer[0] ───────────────────
+      let posX  = v.currentState.posX
+      let posY  = v.currentState.posY
+      let angle = v.currentState.angle
+      let inputTarget = v.currentState.input
+
+      if (v.buffer.length > 0) {
+        const next = v.buffer[0]
+        const gap  = next.serverTimeMs - v.currentState.serverTimeMs
+        const ratio = gap > 0
+          ? Math.max(0, Math.min(1, (v.virtualTimeMs - v.currentState.serverTimeMs) / gap))
+          : 0
+        posX  = v.currentState.posX  + (next.posX  - v.currentState.posX)  * ratio
+        posY  = v.currentState.posY  + (next.posY  - v.currentState.posY)  * ratio
+        let da = next.angle - v.currentState.angle
+        while (da >  Math.PI) da -= Math.PI * 2
+        while (da < -Math.PI) da += Math.PI * 2
+        angle = v.currentState.angle + da * ratio
+        inputTarget = next.input
+      }
+
+      // ── Apply to sprites ──────────────────────────────────────────────────
       const sx = posX * PIXELS_PER_UNIT
       const sy = -posY * PIXELS_PER_UNIT
       v.shipSprite.position.set(sx, sy)
       v.shipSprite.rotation = gameAngleToPixi(angle)
       v.shieldSprite.position.set(sx, sy)
 
-      // Lerp toward the new input so thruster power is smooth
-      const LI = 1 - Math.exp(-dt / 0.08)  // ~80ms smoothing
-      v.lastInput.surge  += (v.stateB.input.surge  - v.lastInput.surge)  * LI
-      v.lastInput.strafe += (v.stateB.input.strafe - v.lastInput.strafe) * LI
-      v.lastInput.torque += (v.stateB.input.torque - v.lastInput.torque) * LI
+      // Smooth thruster input (~80 ms exp lag) so FX don't snap between states
+      const LI = 1 - Math.exp(-dt / 0.08)
+      v.lastInput.surge  += (inputTarget.surge  - v.lastInput.surge)  * LI
+      v.lastInput.strafe += (inputTarget.strafe - v.lastInput.strafe) * LI
+      v.lastInput.torque += (inputTarget.torque - v.lastInput.torque) * LI
       v.thrusterFX.update(v.lastInput, dt)
 
       // Name label: project world → screen

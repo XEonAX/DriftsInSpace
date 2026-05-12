@@ -38,7 +38,7 @@ public class GalaxyService : IHostedService, IDisposable
         _sendTimer = new Timer(_ =>
         {
             var now       = Stopwatch.GetTimestamp();
-            var deltaMs   = (uint)((now - _lastSendStamp) / TimeSpan.TicksPerMillisecond);
+            var deltaMs   = (uint)((now - _lastSendStamp) * 1000L / Stopwatch.Frequency);
             _lastSendStamp = now;
             _hub.BroadcastStates(deltaMs);
         }, null, TimeSpan.Zero, TimeSpan.FromMilliseconds(_cfg.SendIntervalMs));
