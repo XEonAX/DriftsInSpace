@@ -13,6 +13,7 @@ import type { LevelData, Obstacle, Prop } from '../data/levels'
 import { OBSTACLE_SIZE, quatToAngle } from '../data/levels'
 import { ThrusterFX } from './ThrusterFX'
 import type { ShipSkinData } from './ThrusterFX'
+import { loadShipData } from '../data/ships'
 import { BackgroundRenderer } from './BackgroundRenderer'
 import { PropParticleFX } from './PropParticleFX'
 
@@ -513,19 +514,29 @@ export class GameRenderer {
 
     const tex = await this.loadRemoteTexture(skinId)
 
+    // Load ship data to get the real collision radius (same as local player)
+    let shieldRadius = 0.63  // safe fallback
+    try {
+      const shipData = await loadShipData(skinId)
+      shieldRadius = shipData.ShipDetails.Radius
+    } catch { /* unknown ship — keep fallback */ }
+
     // Shield ring
     const shieldTex = await Assets.load('/assets/textures/Shield128.png')
     const shield = new Sprite(shieldTex)
     shield.anchor.set(0.5)
     shield.tint = 0x4488ff
     shield.alpha = 0.6
-    shield.width = shield.height = PIXELS_PER_UNIT * 1.26 * 2  // approx radius 0.63 * 2
-    this.worldContainer.addChildAt(shield, 0)
+    shield.width = shield.height = shieldRadius * 2 * PIXELS_PER_UNIT
 
     const ship = new Sprite(tex)
     ship.anchor.set(0.5)
     ship.width = ship.height = PIXELS_PER_UNIT
-    this.worldContainer.addChild(ship)
+
+    // Insert both below the local ship sprite so local player is always on top
+    const localShipIdx = this.worldContainer.children.indexOf(this.shipSprite)
+    this.worldContainer.addChildAt(ship,   localShipIdx)
+    this.worldContainer.addChildAt(shield, localShipIdx)
 
     // Thruster FX parented to remote ship sprite
     const thrusterFX = new ThrusterFX(ship)
