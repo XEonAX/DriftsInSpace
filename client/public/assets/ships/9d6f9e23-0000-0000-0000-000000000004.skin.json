@@ -1,0 +1,72 @@
+{
+    "ShipSkinId": "9d6f9e23-0000-0000-0000-000000000004",
+    "SkinName": "Neon Purple Squid",
+    "UserId": "9d6f9e23-ce5b-471d-b540-a59337df653d",
+    "Version": 100,
+    "FromShipSkinId": "00000000-0000-0000-0000-000000000000",
+    "ShipId": "00000003-f0c1-caca-deaf-d1ba51cab0de",
+    "UserDisplayName": "Serphal",
+    "CreatedAt": "2022-11-27T10:49:51.3476279+00:00",
+    "ModifiedAt": "2022-11-27T10:49:51.3476286+00:00",
+    "Exclusive": false,
+    "State": "Published",
+    "LeftReverseThruster": {
+        "Position": {
+            "x": -0.375,
+            "y": 0.259,
+            "z": 0.0
+        },
+        "Scale": {
+            "x": 0.18,
+            "y": 0.2,
+            "z": 1.0
+        },
+        "Rotation": 200.0,
+        "Color": {
+            "r": 0.71,
+            "g": 0.56,
+            "b": 1.0,
+            "a": 1.0
+        }
+    },
+    "RightReverseThruster": {
+        "Position": {
+            "x": 0.375,
+            "y": 0.259,
+            "z": 0.0
+        },
+        "Scale": {
+            "x": 0.18,
+            "y": 0.2,
+            "z": 1.0
+        },
+        "Rotation": 160.00002,
+        "Color": {
+            "r": 0.71,
+            "g": 0.56,
+            "b": 1.0,
+            "a": 1.0
+        }
+    },
+    "MainThrusters": [
+        {
+            "Position": {
+                "x": 0.0,
+                "y": -0.348,
+                "z": 0.0
+            },
+            "Scale": {
+                "x": 0.5,
+                "y": 0.4,
+                "z": 1.0
+            },
+            "Rotation": 0.0,
+            "Color": {
+                "r": 0.71,
+                "g": 0.56,
+                "b": 1.0,
+                "a": 1.0
+            }
+        }
+    ]
+}

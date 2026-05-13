@@ -1,0 +1,91 @@
+{
+  "ShipSkinId": "47aeb9db-0000-0000-0000-000000000001",
+  "SkinName": "Dengeki",
+  "UserId": "47aeb9db-c288-45ce-87bc-43900061fa09",
+  "Version": 3,
+  "FromShipSkinId": "00000000-0000-0000-0000-000000000000",
+  "ShipId": "00000002-f00d-feed-bee5-ba51c5b0d1ce",
+  "UserDisplayName": "nekobun",
+  "CreatedAt": "2022-08-25T15:23:51.6624282+00:00",
+  "ModifiedAt": "2022-08-25T15:23:51.662429+00:00",
+  "Exclusive": true,
+  "State": "Published",
+  "LeftReverseThruster": {
+    "Position": {
+      "x": 0.275,
+      "y": 0.354,
+      "z": 0.0
+    },
+    "Scale": {
+      "x": 0.1,
+      "y": 0.2,
+      "z": 1.0
+    },
+    "Rotation": 131.76,
+    "Color": {
+      "r": 0.89,
+      "g": 0.71,
+      "b": 0.29,
+      "a": 1.0
+    }
+  },
+  "RightReverseThruster": {
+    "Position": {
+      "x": -0.315,
+      "y": 0.356,
+      "z": 0.0
+    },
+    "Scale": {
+      "x": 0.125,
+      "y": 0.2,
+      "z": 1.0
+    },
+    "Rotation": 231.1,
+    "Color": {
+      "r": 0.89,
+      "g": 0.71,
+      "b": 0.29,
+      "a": 1.0
+    }
+  },
+  "MainThrusters": [
+    {
+      "Position": {
+        "x": -0.328,
+        "y": -0.402,
+        "z": 0.0
+      },
+      "Scale": {
+        "x": 0.35,
+        "y": 0.4,
+        "z": 1.0
+      },
+      "Rotation": 0.0,
+      "Color": {
+        "r": 0.89,
+        "g": 0.71,
+        "b": 0.29,
+        "a": 1.0
+      }
+    },
+    {
+      "Position": {
+        "x": 0.328,
+        "y": -0.402,
+        "z": 0.0
+      },
+      "Scale": {
+        "x": 0.35,
+        "y": 0.4,
+        "z": 1.0
+      },
+      "Rotation": 0.0,
+      "Color": {
+        "r": 0.89,
+        "g": 0.71,
+        "b": 0.29,
+        "a": 1.0
+      }
+    }
+  ]
+}

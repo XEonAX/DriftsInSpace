@@ -21,6 +21,7 @@ export class Game {
   private rafId = 0
   private running = false
   private shipId: string
+  private skinId: string
   private colliders: ObstacleCollider[] = []
   private forceZones: ForceZone[] = []
   private props: Prop[] = []
@@ -31,8 +32,9 @@ export class Game {
   private readonly displayName: string
   // No per-prop boolean state needed — all props now use continuous proximity
 
-  constructor(shipId: string, displayName: string) {
+  constructor(shipId: string, skinId: string, displayName: string) {
     this.shipId = shipId
+    this.skinId = skinId
     this.displayName = displayName
   }
 
@@ -42,12 +44,12 @@ export class Game {
     canvas.id = 'game-canvas'
     document.body.appendChild(canvas)
 
-    await this.renderer.init(canvas, this.shipId)
+    await this.renderer.init(canvas, this.skinId)
 
     // Load ship physics data + skin
     const shipData = await loadShipData(this.shipId)
     this.renderer.setShipRadius(shipData.ShipDetails.Radius)
-    await this.renderer.loadSkin(this.shipId)
+    await this.renderer.loadSkin(this.skinId)
 
     // Load the default level
     const level = await loadLevel(DEFAULT_LEVEL_ID)

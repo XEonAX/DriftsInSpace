@@ -84,7 +84,7 @@ export class GameRenderer {
   private remotePlayers: Map<number, RemotePlayerView> = new Map()
   private debugText!: Text
 
-  async init(canvas: HTMLCanvasElement, shipId: string): Promise<void> {
+  async init(canvas: HTMLCanvasElement, skinId: string): Promise<void> {
     this.app = new Application()
     await this.app.init({
       canvas,
@@ -104,7 +104,7 @@ export class GameRenderer {
     this.bgRenderer.init(this.app, this.app.stage)
 
     // ─── Ship sprite ───────────────────────────────────────────────────────
-    const shipTexture = await Assets.load(`/assets/ships/${shipId}.png`)
+    const shipTexture = await Assets.load(`/assets/ships/${skinId}.png`)
     this.shipSprite = new Sprite(shipTexture)
     this.shipSprite.anchor.set(0.5)
     // Ship sprite is 1×1 Unity unit; will be confirmed in setShipRadius
@@ -160,8 +160,8 @@ export class GameRenderer {
   }
 
   /** Load thruster skin data. */
-  async loadSkin(shipId: string): Promise<void> {
-    const url = `/assets/ships/${shipId}.skin.json`
+  async loadSkin(skinId: string): Promise<void> {
+    const url = `/assets/ships/${skinId}.skin.json`
     const skin: ShipSkinData = await Assets.load(url)
     this.thrusterFX.loadSkin(skin)
   }

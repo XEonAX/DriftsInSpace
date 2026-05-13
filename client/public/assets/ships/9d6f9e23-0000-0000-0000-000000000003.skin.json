@@ -1,0 +1,72 @@
+{
+    "ShipSkinId": "9d6f9e23-0000-0000-0000-000000000003",
+    "SkinName": "Neon Purple Falcon",
+    "UserId": "9d6f9e23-ce5b-471d-b540-a59337df653d",
+    "Version": 100,
+    "FromShipSkinId": "00000000-0000-0000-0000-000000000000",
+    "ShipId": "00000002-f00d-feed-bee5-ba51c5b0d1ce",
+    "UserDisplayName": "Serphal",
+    "CreatedAt": "2022-11-27T10:47:31.3588822+00:00",
+    "ModifiedAt": "2022-11-27T10:47:31.3588831+00:00",
+    "Exclusive": false,
+    "State": "Published",
+    "LeftReverseThruster": {
+        "Position": {
+            "x": -0.32,
+            "y": 0.128,
+            "z": 0.0
+        },
+        "Scale": {
+            "x": 0.125,
+            "y": 0.2,
+            "z": 1.0
+        },
+        "Rotation": 180.0,
+        "Color": {
+            "r": 0.71,
+            "g": 0.56,
+            "b": 1.0,
+            "a": 1.0
+        }
+    },
+    "RightReverseThruster": {
+        "Position": {
+            "x": 0.32,
+            "y": 0.128,
+            "z": 0.0
+        },
+        "Scale": {
+            "x": 0.125,
+            "y": 0.2,
+            "z": 1.0
+        },
+        "Rotation": 180.0,
+        "Color": {
+            "r": 0.71,
+            "g": 0.56,
+            "b": 1.0,
+            "a": 1.0
+        }
+    },
+    "MainThrusters": [
+        {
+            "Position": {
+                "x": 0.0,
+                "y": -0.367,
+                "z": 0.0
+            },
+            "Scale": {
+                "x": 0.5,
+                "y": 0.4,
+                "z": 1.0
+            },
+            "Rotation": 0.0,
+            "Color": {
+                "r": 0.71,
+                "g": 0.56,
+                "b": 1.0,
+                "a": 1.0
+            }
+        }
+    ]
+}
