@@ -9,57 +9,346 @@
       html, body { width: 100%; height: 100%; overflow: hidden; background: #05050f; }
       #game-canvas { display: block; }
 
-      /* ── Ship Picker ───────────────────────────────────────── */
+      /* ══════════════════════════════════════════
+         SHIPYARD PICKER
+         Palette: deep space purple, orange/gold accents, cyan corner marks
+      ══════════════════════════════════════════ */
+
       #ship-picker {
         position: fixed; inset: 0;
         display: flex; align-items: center; justify-content: center;
-        background: rgba(5, 5, 15, 0.97);
+        background:
+          radial-gradient(ellipse 65% 50% at 18% 50%, rgba(95, 18, 170, 0.28) 0%, transparent 65%),
+          radial-gradient(ellipse 50% 70% at 82% 45%, rgba(48, 8, 115, 0.32) 0%, transparent 65%),
+          #07030d;
         font-family: 'Segoe UI', system-ui, sans-serif;
-        color: #e0e8ff;
+        color: #e0c880;
         z-index: 100;
+        overflow: hidden;
       }
-      .picker-inner { display: flex; flex-direction: column; align-items: center; gap: 20px; width: 90%; max-width: 700px; }
-      .picker-inner h1 { font-size: 2rem; letter-spacing: 3px; text-transform: uppercase; color: #a0c4ff; }
-      .name-row input {
-        padding: 10px 16px; font-size: 1rem; border-radius: 6px;
-        border: 1px solid #334; background: #0d0d22; color: #e0e8ff;
-        width: 280px; outline: none;
+
+      /* Star field */
+      #ship-picker::before {
+        content: ''; position: absolute; inset: 0; pointer-events: none;
+        background-image:
+          radial-gradient(1.5px 1.5px at  8% 12%, rgba(255,255,255,.8) 0%, transparent 100%),
+          radial-gradient(1px   1px   at 25%  5%, rgba(255,255,255,.6) 0%, transparent 100%),
+          radial-gradient(1px   1px   at 48% 22%, rgba(255,255,255,.9) 0%, transparent 100%),
+          radial-gradient(1px   1px   at 65%  8%, rgba(255,255,255,.5) 0%, transparent 100%),
+          radial-gradient(1.5px 1.5px at 85% 18%, rgba(255,255,255,.7) 0%, transparent 100%),
+          radial-gradient(1px   1px   at  5% 55%, rgba(255,255,255,.5) 0%, transparent 100%),
+          radial-gradient(1px   1px   at 32% 72%, rgba(255,255,255,.7) 0%, transparent 100%),
+          radial-gradient(1px   1px   at 58% 82%, rgba(255,255,255,.4) 0%, transparent 100%),
+          radial-gradient(1.5px 1.5px at 78% 65%, rgba(255,255,255,.6) 0%, transparent 100%),
+          radial-gradient(1px   1px   at 93% 78%, rgba(255,255,255,.5) 0%, transparent 100%),
+          radial-gradient(1px   1px   at  3% 88%, rgba(255,255,255,.4) 0%, transparent 100%),
+          radial-gradient(1px   1px   at 42% 93%, rgba(255,255,255,.5) 0%, transparent 100%),
+          radial-gradient(1px   1px   at 72% 92%, rgba(255,255,255,.6) 0%, transparent 100%),
+          radial-gradient(1px   1px   at 18% 40%, rgba(255,255,255,.3) 0%, transparent 100%),
+          radial-gradient(1px   1px   at 55% 46%, rgba(255,255,255,.4) 0%, transparent 100%),
+          radial-gradient(1.5px 1.5px at 90% 35%, rgba(255,255,255,.5) 0%, transparent 100%),
+          radial-gradient(1px   1px   at 37% 36%, rgba(255,255,255,.35) 0%, transparent 100%),
+          radial-gradient(1px   1px   at 62% 58%, rgba(255,255,255,.55) 0%, transparent 100%),
+          radial-gradient(1px   1px   at 12% 25%, rgba(255,255,255,.45) 0%, transparent 100%),
+          radial-gradient(1px   1px   at 50% 50%, rgba(255,255,255,.2)  0%, transparent 100%);
       }
-      .name-row input:focus { border-color: #5588ff; }
-      .ship-grid { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
-      .ship-card {
-        display: flex; flex-direction: column; align-items: center; gap: 8px;
-        padding: 16px; width: 148px; border-radius: 10px;
-        border: 2px solid #2a2a44; background: #0f0f20;
-        cursor: pointer; transition: border-color .15s, background .15s;
+
+      /* ── Cyan corner brackets ── */
+      .sp-corners { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+      .sp-c { position: absolute; width: 38px; height: 38px; border-color: #4dffcc; border-style: solid; opacity: 0.4; }
+      .sp-c.tl { top: 18px; left: 18px; border-width: 2px 0 0 2px; }
+      .sp-c.tr { top: 18px; right: 18px; border-width: 2px 2px 0 0; }
+      .sp-c.bl { bottom: 18px; left: 18px; border-width: 0 0 2px 2px; }
+      .sp-c.br { bottom: 18px; right: 18px; border-width: 0 2px 2px 0; }
+
+      /* ── Glow wrapper — tight neon border hug ── */
+      .sp-glow {
+        position: relative; z-index: 1;
+        filter:
+          drop-shadow(0 0 1px rgba(255, 160, 20, 0.95))
+          drop-shadow(0 0 6px rgba(220, 115, 0, 0.80))
+          drop-shadow(0 0 22px rgba(190, 85, 0, 0.45))
+          drop-shadow(0 0 50px rgba(150, 60, 0, 0.20));
       }
-      .ship-card:hover { border-color: #4466bb; background: #141428; }
-      .ship-card.selected { border-color: #5599ff; background: #12122a; }
-      .ship-card img { width: 100px; height: 100px; object-fit: contain; }
-      .ship-name { font-weight: 600; font-size: .95rem; }
-      .ship-stats { display: flex; gap: 8px; font-size: .75rem; color: #8899bb; }
-      /* ── Skin selector ─────────────────────────────────────── */
-      .skin-row { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; }
-      .skin-label { font-size: .8rem; color: #8899bb; text-transform: uppercase; letter-spacing: 1px; }
-      .skin-grid { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
-      .skin-tile {
-        display: flex; flex-direction: column; align-items: center; gap: 4px;
-        padding: 8px; width: 90px; border-radius: 8px;
-        border: 2px solid #2a2a44; background: #0f0f20;
-        cursor: pointer; transition: border-color .15s, background .15s;
+
+      /* ── Main panel (clipped octagonal shape) ── */
+      .sp-panel {
+        position: relative;
+        width: min(95vw, 1060px);
+        height: min(88vh, 660px);
+        background: linear-gradient(148deg, #1d0c38 0%, #12072a 42%, #0b0420 100%);
+        clip-path: polygon(
+          18px 0%, calc(100% - 18px) 0%,
+          100% 18px, 100% calc(100% - 18px),
+          calc(100% - 18px) 100%, 18px 100%,
+          0% calc(100% - 18px), 0% 18px
+        );
+        display: flex; flex-direction: column;
+        overflow: hidden;
       }
-      .skin-tile:hover { border-color: #4466bb; background: #141428; }
-      .skin-tile.selected { border-color: #5599ff; background: #12122a; }
-      .skin-tile img { width: 64px; height: 64px; object-fit: contain; }
-      .skin-name { font-size: .7rem; color: #a0b4cc; text-align: center; }
+
+      /* Scanlines */
+      .sp-scanlines {
+        position: absolute; inset: 0; pointer-events: none; z-index: 0;
+        background: repeating-linear-gradient(
+          to bottom, transparent 0px, transparent 3px,
+          rgba(0,0,0,0.055) 3px, rgba(0,0,0,0.055) 4px
+        );
+      }
+
+      /* Inner edge glows */
+      .sp-panel::before {
+        content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 0;
+        background:
+          radial-gradient(ellipse 70% 30% at 50% 0%,   rgba(210,100,0,0.1) 0%, transparent 70%),
+          radial-gradient(ellipse 50% 20% at 50% 100%, rgba(150,60,0,0.08) 0%, transparent 70%);
+      }
+
+      /* ── Header ── */
+      .sp-header {
+        position: relative; z-index: 2;
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 0 28px;
+        height: 62px;
+        border-bottom: 1px solid rgba(210, 120, 0, 0.32);
+        background: linear-gradient(to bottom, rgba(130, 50, 0, 0.13) 0%, transparent 100%);
+        flex-shrink: 0;
+      }
+
+      .sp-title {
+        display: flex; align-items: center; gap: 11px;
+        font-size: clamp(1.1rem, 2vw, 1.45rem);
+        font-weight: 700; letter-spacing: 5px;
+        color: #f2d888;
+        text-shadow: 0 0 14px rgba(255,155,0,0.55), 0 0 34px rgba(220,100,0,0.28);
+      }
+      .sp-title-icon { width: 22px; height: 22px; color: #ff9900; flex-shrink: 0; }
+
+      .sp-pilot { display: flex; align-items: center; gap: 10px; }
+
+      #player-name {
+        padding: 7px 14px; font-size: .875rem; border-radius: 3px;
+        border: 1px solid rgba(180, 100, 0, 0.45);
+        background: rgba(6, 3, 16, 0.85);
+        color: #e0c880; outline: none; width: 200px; letter-spacing: 0.5px;
+        transition: border-color .15s, box-shadow .15s;
+      }
+      #player-name::placeholder { color: #4a3c26; }
+      #player-name:focus { border-color: #ff9900; box-shadow: 0 0 10px rgba(255,150,0,0.22); }
+
+      /* ── Body: 3-column grid ── */
+      .sp-body {
+        position: relative; z-index: 2;
+        display: grid;
+        grid-template-columns: 1fr 250px 1fr;
+        flex: 1;
+        min-height: 0;
+      }
+
+      /* ── Side columns (ships / liveries) ── */
+      .sp-side-col {
+        display: flex; flex-direction: column;
+        padding: 14px 16px 16px;
+        min-height: 0;
+        border-right: 1px solid rgba(200, 115, 0, 0.18);
+      }
+      .sp-side-col + .sp-center-col + .sp-side-col {
+        border-right: none;
+        border-left: 1px solid rgba(200, 115, 0, 0.18);
+      }
+
+      /* Section header label */
+      .sp-col-hdr {
+        display: flex; align-items: center; gap: 8px;
+        font-size: .62rem; letter-spacing: 2.5px; font-weight: 600;
+        color: #b89050; margin-bottom: 10px; padding-bottom: 8px;
+        border-bottom: 1px solid rgba(200, 115, 0, 0.18);
+        flex-shrink: 0;
+      }
+
+      /* Scrollable list */
+      .sp-list {
+        flex: 1; overflow-y: auto; overflow-x: hidden;
+        display: flex; flex-direction: column; gap: 2px;
+        scrollbar-width: thin; scrollbar-color: rgba(180,100,0,0.38) transparent;
+      }
+      .sp-list::-webkit-scrollbar { width: 3px; }
+      .sp-list::-webkit-scrollbar-thumb { background: rgba(180,100,0,0.45); border-radius: 2px; }
+
+      .sp-hint { font-size: .72rem; color: #6a5838; padding: 10px 6px; font-style: italic; }
+
+      /* ── Row items ── */
+      .sp-row {
+        display: flex; align-items: center; gap: 10px;
+        padding: 6px 8px; border-radius: 2px; cursor: pointer;
+        border: 1px solid transparent;
+        background: rgba(255,255,255,0.02);
+        transition: background .1s, border-color .1s;
+        position: relative; min-width: 0;
+      }
+      .sp-row:hover { background: rgba(190, 85, 0, 0.18); border-color: rgba(210,120,0,0.28); }
+      .sp-row.selected {
+        background: rgba(185, 90, 0, 0.32);
+        border-color: rgba(255, 148, 0, 0.65);
+        box-shadow: inset 3px 0 0 #ff9900;
+      }
+      .sp-row-chevron {
+        margin-left: auto; font-size: 1.1rem; line-height: 1;
+        color: transparent; transition: color .1s;
+        flex-shrink: 0;
+      }
+      .sp-row.selected .sp-row-chevron { color: #ff9900; }
+      .sp-row-thumb { width: 38px; height: 38px; object-fit: contain; flex-shrink: 0; }
+      .sp-row-info { display: flex; flex-direction: column; min-width: 0; }
+      .sp-row-name {
+        font-size: .82rem; font-weight: 600; color: #d8b860;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .sp-row-sub { font-size: .62rem; color: #8a6e42; margin-top: 2px; }
+
+      /* ── Center preview column ── */
+      .sp-center-col {
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center; gap: 14px;
+        padding: 18px 10px 16px;
+      }
+
+      /* Glowing orb */
+      .sp-orb {
+        width: 100%; aspect-ratio: 1;
+        border-radius: 50%;
+        background: radial-gradient(circle at 42% 38%,
+          rgba(75, 22, 130, 0.9) 0%, rgba(20, 7, 48, 0.96) 55%, rgba(10, 4, 28, 1) 100%);
+        border: 2px solid #b87000;
+        display: flex; align-items: center; justify-content: center;
+        position: relative; overflow: hidden;
+        animation: orb-pulse 3.5s ease-in-out infinite;
+      }
+      .sp-orb::before {
+        content: ''; position: absolute; inset: 0; border-radius: 50%;
+        background: radial-gradient(ellipse 65% 28% at 50% 8%,
+          rgba(255,175,55,0.1) 0%, transparent 65%);
+        pointer-events: none;
+      }
+      @keyframes orb-pulse {
+        0%,100% { box-shadow: 0 0 20px rgba(200,110,0,.42), 0 0 52px rgba(155,75,0,.2),  inset 0 0 22px rgba(75,28,155,.35); }
+        50%      { box-shadow: 0 0 32px rgba(225,130,0,.58), 0 0 75px rgba(175,85,0,.28), inset 0 0 34px rgba(88,35,170,.5); }
+      }
+
+      /* Preview canvas fills the orb; clipped circular by overflow:hidden */
+      #ship-preview-canvas {
+        width: 100%; height: 100%; display: block;
+      }
+
+      /* Stat bars */
+      .sp-stats { width: 100%; display: flex; flex-direction: column; gap: 7px; padding: 0 4px; }
+      .sp-stat-row { display: flex; flex-direction: column; gap: 3px; }
+      .sp-stat-row > span { font-size: .57rem; letter-spacing: 2.5px; color: #9a7c48; font-weight: 700; }
+      .sp-stat-track {
+        height: 5px; background: rgba(255,255,255,0.07); border-radius: 3px; overflow: hidden;
+      }
+      .sp-stat-fill {
+        height: 100%; border-radius: 3px;
+        background: linear-gradient(to right, #b06500, #ff9900);
+        box-shadow: 0 0 6px rgba(255,148,0,0.38);
+        transition: width .4s cubic-bezier(.4,0,.2,1);
+      }
+      .sp-stat-mass {
+        background: linear-gradient(to right, #405080, #7088c0);
+        box-shadow: 0 0 6px rgba(100,140,220,0.3);
+      }
+
+      /* ── Footer ── */
+      .sp-footer {
+        position: relative; z-index: 2;
+        display: flex; align-items: center; justify-content: center;
+        height: 66px;
+        border-top: 1px solid rgba(210, 120, 0, 0.32);
+        background: linear-gradient(to top, rgba(130, 55, 0, 0.1) 0%, transparent 100%);
+        flex-shrink: 0;
+      }
+
       #launch-btn {
-        padding: 12px 48px; font-size: 1.1rem; font-weight: 600;
-        border: none; border-radius: 8px; cursor: pointer;
-        background: #3366ff; color: #fff; letter-spacing: 1px;
-        transition: background .15s, opacity .15s;
+        display: flex; align-items: center; gap: 9px;
+        padding: 0 62px; height: 40px;
+        font-size: .95rem; font-weight: 700; letter-spacing: 4px;
+        border: none; cursor: pointer;
+        background: linear-gradient(135deg, #aa5f00 0%, #f09000 50%, #b56800 100%);
+        color: #fff5d8;
+        text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+        clip-path: polygon(12px 0%, calc(100% - 12px) 0%, 100% 50%, calc(100% - 12px) 100%, 12px 100%, 0% 50%);
+        filter: drop-shadow(0 0 10px rgba(200,110,0,0.45));
+        transition: filter .12s;
       }
-      #launch-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-      #launch-btn:not(:disabled):hover { background: #4477ff; }
+      #launch-btn:disabled { opacity: 0.22; cursor: not-allowed; filter: none; }
+      #launch-btn:not(:disabled):hover {
+        background: linear-gradient(135deg, #c07000 0%, #ffaa22 50%, #cc7800 100%);
+        filter: drop-shadow(0 0 18px rgba(225,130,0,0.65));
+      }
+      /* ═══════════════════════════════════════════
+         RESPONSIVE — Tablet (≤ 900px)
+      ═══════════════════════════════════════════ */
+      @media (max-width: 900px) {
+        .sp-body { grid-template-columns: 1fr 170px 1fr; }
+        .sp-orb { max-width: 150px; max-height: 150px; }
+        .sp-center-col { padding: 12px 6px; }
+        #player-name { width: 160px; }
+      }
+
+      /* ═══════════════════════════════════════════
+         RESPONSIVE — Mobile (≤ 600px)
+      ═══════════════════════════════════════════ */
+      @media (max-width: 600px) {
+        /* full-screen, no clip-path chamfer (too small) */
+        .sp-glow { filter: none; width: 100%; height: 100%; }
+        .sp-panel {
+          width: 100vw; height: 100dvh;
+          clip-path: none; border-radius: 0;
+          border-left: none; border-right: none;
+        }
+        /* hide corner brackets */
+        .sp-corners { display: none; }
+
+        /* header stacks on two rows */
+        .sp-header {
+          flex-wrap: wrap; height: auto;
+          padding: 10px 14px 10px; gap: 6px;
+        }
+        .sp-pilot { flex: 1 1 100%; justify-content: flex-end; }
+        #player-name { width: 100%; max-width: 100%; }
+
+        /* 2-col grid: ship list | skin list, no center orb */
+        .sp-body { grid-template-columns: 1fr 1fr; }
+        .sp-center-col { display: none; }
+        .sp-side-col { padding: 10px 10px 12px; }
+        .sp-side-col + .sp-center-col + .sp-side-col {
+          border-left: 1px solid rgba(200,115,0,0.18);
+        }
+
+        /* larger touch targets */
+        .sp-row { padding: 10px 8px; gap: 10px; }
+        .sp-row-thumb { width: 42px; height: 42px; }
+        .sp-row-name { font-size: .88rem; }
+        .sp-row-sub { font-size: .68rem; }
+        .sp-col-hdr { font-size: .65rem; }
+
+        /* footer & button */
+        .sp-footer { height: 74px; }
+        #launch-btn {
+          width: 80%; padding: 0; height: 46px;
+          font-size: 1rem;
+          clip-path: polygon(10px 0%, calc(100% - 10px) 0%, 100% 50%, calc(100% - 10px) 100%, 10px 100%, 0% 50%);
+        }
+      }
+
+      /* ═══════════════════════════════════════════
+         RESPONSIVE — Very small (≤ 380px)
+      ═══════════════════════════════════════════ */
+      @media (max-width: 380px) {
+        .sp-title { font-size: .95rem; letter-spacing: 3px; }
+        .sp-row-thumb { width: 34px; height: 34px; }
+        .sp-side-col { padding: 8px 6px 10px; }
+      }
     </style>
   </head>
   <body>
