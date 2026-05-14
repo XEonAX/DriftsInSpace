@@ -10,11 +10,13 @@ import type { Prop } from '../data/levels'
 import { AudioManager } from '../audio/AudioManager'
 import type { CollisionMaterial } from '../audio/AudioManager'
 import { NetClient } from '../net/NetClient'
+import { TouchOverlay } from '../input/TouchOverlay'
 
 export class Game {
   private renderer = new GameRenderer()
   private input = new InputManager()
   private audio = new AudioManager()
+  private touchOverlay = new TouchOverlay()
   private shipState: ShipState = createShipState()
   private accumulator = 0
   private lastTime = 0
@@ -39,12 +41,20 @@ export class Game {
   }
 
   async start(): Promise<void> {
+    // Unlock AudioContext immediately — start() is called from a user gesture (ShipPicker click).
+    this.audioStarted = true
+    void this.audio.init()
+
     // Create and attach canvas
     const canvas = document.createElement('canvas')
     canvas.id = 'game-canvas'
     document.body.appendChild(canvas)
 
     await this.renderer.init(canvas, this.skinId)
+    await this.touchOverlay.init(this.renderer.app)
+    if (TouchOverlay.isTouchDevice()) {
+      this.input.setHitTester(this.touchOverlay)
+    }
 
     // Load ship physics data + skin
     const shipData = await loadShipData(this.shipId)
@@ -60,18 +70,11 @@ export class Game {
     this.propState = initialPropState()
 
     // Handle window resize
-    window.addEventListener('resize', () => this.renderer.resizeBg())
-
-    // Unlock AudioContext on first user gesture then load audio
-    const unlockAudio = (): void => {
-      if (this.audioStarted) return
-      this.audioStarted = true
-      void this.audio.init()
-      window.removeEventListener('keydown', unlockAudio)
-      window.removeEventListener('pointerdown', unlockAudio)
-    }
-    window.addEventListener('keydown', unlockAudio)
-    window.addEventListener('pointerdown', unlockAudio)
+    window.addEventListener('resize', () => {
+      this.renderer.resizeBg()
+      // Defer overlay rebuild one frame so PixiJS has updated app.screen first
+      requestAnimationFrame(() => this.touchOverlay.onResize())
+    })
 
     this.running = true
     this.lastTime = performance.now()
@@ -132,6 +135,7 @@ export class Game {
     if (details) {
       while (this.accumulator >= FIXED_DT) {
         this.prevShipState = this.shipState
+        this.input.setShipAngle(this.shipState.angle)
         const input = this.input.getInput()
         this.renderer.setInput(input)
         this.shipState = stepShip(this.shipState, input, details)
@@ -177,6 +181,15 @@ export class Game {
     }
 
     this.renderer.render(interpolated)
+
+    // ── Touch overlay visual update ───────────────────────────────────────
+    this.touchOverlay.setStyle(this.input.currentTouchStyle)
+    if (this.input.hasTouches) {
+      const ts = this.input.getTouchState()
+      this.touchOverlay.update(ts.surge, ts.leftPressed, ts.rightPressed, ts.joystickDelta)
+    } else {
+      this.touchOverlay.update(0, false, false)
+    }
 
     // ── Engine audio (every frame, uses smoothed input) ──────────────────
     if (this.audioStarted) {
@@ -265,5 +278,6 @@ export class Game {
     this.net.disconnect()
     this.renderer.destroy()
     this.audio.destroy()
+    this.touchOverlay.destroy()
   }
 }
