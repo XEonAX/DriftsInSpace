@@ -1,6 +1,6 @@
 import { Application, Sprite, Assets } from 'pixi.js'
 import { loadAllShips, SHIP_SKINS } from '../data/ships'
-import type { ShipData } from '../data/ships'
+import type { ShipData, ShipDetails } from '../data/ships'
 import { ThrusterFX } from '../renderer/ThrusterFX'
 import type { ShipSkinData } from '../renderer/ThrusterFX'
 import { PIXELS_PER_UNIT } from '../physics/ShipPhysics'
@@ -15,7 +15,9 @@ class PreviewPlayer {
   private phase = 0
 
   async init(canvas: HTMLCanvasElement): Promise<void> {
-    const size = canvas.parentElement!.clientWidth || 200
+    // Canvas is 150% of orb diameter (CSS), so size the PixiJS app to match
+    const orbSize = canvas.parentElement!.clientWidth || 200
+    const size = Math.round(orbSize * 1.5)
     this.app = new Application()
     await this.app.init({
       canvas,
@@ -44,7 +46,8 @@ class PreviewPlayer {
     const s = new Sprite(tex)
     s.anchor.set(0.5, 0.5)
     s.position.set(size / 2, size / 2)
-    s.width = s.height = size * 0.52
+    // Ship fills ~52% of the orb (inner 2/3 of canvas), not the full canvas
+    s.width = s.height = (size / 1.5) * 0.52
     this.app.stage.addChild(s)
     this.ship = s
 
@@ -82,6 +85,22 @@ export async function showShipPicker(
   onSelect: (shipId: string, skinId: string, name: string) => void,
 ): Promise<void> {
   const ships = await loadAllShips()
+
+  const STAT_DEFS: Array<{ key: keyof ShipDetails; label: string }> = [
+    { key: 'Mass',          label: 'Mass'               },
+    { key: 'SurgeForward',  label: 'Forward Thrusters'  },
+    { key: 'LDrag',         label: 'Vel. Stabilization' },
+    { key: 'Bounce',        label: 'Shield Repulsion'   },
+    { key: 'Torque',        label: 'Turn Thrusters'     },
+    { key: 'SurgeBackward', label: 'Reverse Thrusters'  },
+    { key: 'ADrag',         label: 'Spin Stabilization' },
+    { key: 'Friction',      label: 'Shield Resistance'  },
+  ]
+  const statMax = {} as Record<keyof ShipDetails, number>
+  for (const { key } of STAT_DEFS) {
+    statMax[key] = Math.max(...ships.map(s => s.ShipDetails[key]))
+  }
+
   let playerName = localStorage.getItem('drifts_name') ?? ''
 
   const overlay = document.createElement('div')
@@ -97,12 +116,13 @@ export async function showShipPicker(
         <div class="sp-scanlines" aria-hidden="true"></div>
         <div class="sp-header">
           <div class="sp-title">
-            <svg class="sp-title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
-              <path d="M12 2C12 2 5 8 5 14v3l7-2 7 2v-3C19 8 12 2 12 2Z"/>
-              <path d="M5 17L2 22M19 17L22 22" stroke-linecap="round"/>
-              <circle cx="12" cy="10" r="2.2" fill="currentColor" stroke="none"/>
+            <svg class="sp-title-icon" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M16.89,15.5L18.31,16.89C19.21,15.73 19.76,14.39 19.93,13H17.91C17.77,13.87 17.43,14.72 16.89,15.5M13,17.9V19.92C14.39,19.75 15.74,19.21 16.9,18.31L15.46,16.87C14.71,17.41 13.87,17.76 13,17.9M19.93,11C19.76,9.61 19.21,8.27 18.31,7.11L16.89,8.53C17.43,9.28 17.77,10.13 17.91,11M15.55,5.55L11,1V4.07C7.06,4.56 4,7.92 4,12C4,16.08 7.05,19.44 11,19.93V17.91C8.16,17.43 6,14.97 6,12C6,9.03 8.16,6.57 11,6.09V10L15.55,5.55Z"/>
             </svg>
-            SHIPYARD
+            DRIFTS IN SPACE
+            <svg class="sp-title-icon" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19,1L17.74,3.75L15,5L17.74,6.26L19,9L20.25,6.26L23,5L20.25,3.75M9,4L6.5,9.5L1,12L6.5,14.5L9,20L11.5,14.5L17,12L11.5,9.5M19,15L17.74,17.74L15,19L17.74,20.25L19,23L20.25,20.25L23,19L20.25,17.74"/>
+            </svg>
           </div>
           <div class="sp-pilot">
             <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18" style="opacity:.7;flex-shrink:0">
@@ -117,7 +137,7 @@ export async function showShipPicker(
           <div class="sp-side-col">
             <div class="sp-col-hdr">
               <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14" style="opacity:.75;flex-shrink:0">
-                <path d="M12 2C12 2 5 8 5 14v3l7-2 7 2v-3C19 8 12 2 12 2Z"/>
+                <path d="M12 2C12 2 7 4 7 12C7 15.1 7.76 17.75 8.67 19.83C9 20.55 9.71 21 10.5 21H13.5C14.29 21 15 20.55 15.33 19.83C16.25 17.75 17 15.1 17 12C17 4 12 2 12 2M13.5 19H10.5C9.5 16.76 9 14.41 9 12C9 7.36 10.9 5.2 12 4.33C13.1 5.2 15 7.36 15 12C15 14.41 14.5 16.76 13.5 19M20 22L16.14 20.45C16.84 18.92 17.34 17.34 17.65 15.73M7.86 20.45L4 22L6.35 15.73C6.66 17.34 7.16 18.92 7.86 20.45M12 12C10.9 12 10 11.1 10 10C10 8.9 10.9 8 12 8C13.1 8 14 8.9 14 10C14 11.1 13.1 12 12 12Z"/>
               </svg>
               SELECT SHIP
             </div>
@@ -173,7 +193,7 @@ export async function showShipPicker(
   await preview.init(previewCanvas)
 
   function updateLaunchState(): void {
-    launchBtn.disabled = !selectedShipId || !selectedSkinId || nameInput.value.trim().length === 0
+    launchBtn.disabled = !selectedShipId || !selectedSkinId
   }
 
   function showSkinsForShip(ship: ShipData): void {
@@ -215,7 +235,7 @@ export async function showShipPicker(
       <img class="sp-row-thumb" src="/assets/ships/${ship.ShipId}.thumb.png" alt="${ship.ShipName}"/>
       <div class="sp-row-info">
         <span class="sp-row-name">${ship.ShipName}</span>
-        <span class="sp-row-sub">\u2b06${d.SurgeForward} &nbsp;\u21ba${d.Torque} &nbsp;\u2b1b${d.Mass}</span>
+
       </div>
       <span class="sp-row-chevron">\u203a</span>
     `
@@ -223,17 +243,18 @@ export async function showShipPicker(
       shipList.querySelectorAll('.sp-row').forEach(r => r.classList.remove('selected'))
       row.classList.add('selected')
       selectedShipId = ship.ShipId
-      const thrust = Math.min(100, (d.SurgeForward / 500) * 100)
-      const torque = Math.min(100, (d.Torque / 500) * 100)
-      const mass   = Math.min(100, (d.Mass / 15) * 100)
-      previewStats.innerHTML = `
-        <div class="sp-stat-row"><span>THRUST</span>
-          <div class="sp-stat-track"><div class="sp-stat-fill" style="width:${thrust}%"></div></div></div>
-        <div class="sp-stat-row"><span>TORQUE</span>
-          <div class="sp-stat-track"><div class="sp-stat-fill" style="width:${torque}%"></div></div></div>
-        <div class="sp-stat-row"><span>MASS</span>
-          <div class="sp-stat-track"><div class="sp-stat-fill sp-stat-mass" style="width:${mass}%"></div></div></div>
-      `
+      previewStats.innerHTML = STAT_DEFS.map(({ key, label }) => {
+        const val = d[key]
+        const max = statMax[key]
+        const pct = max > 0 ? Math.min(100, (val / max) * 100) : 0
+        return `<div class="sp-stat">
+            <div class="sp-stat-track"><div class="sp-stat-fill" style="width:${pct.toFixed(1)}%"></div></div>
+            <div class="sp-stat-meta">
+              <span class="sp-stat-name">${label}</span>
+              <span class="sp-stat-val">${fmtDings(val)}</span>
+            </div>
+          </div>`
+      }).join('')
       showSkinsForShip(ship)
       updateLaunchState()
     })
@@ -247,12 +268,17 @@ export async function showShipPicker(
 
   launchBtn.addEventListener('click', () => {
     const name = nameInput.value.trim()
-    if (!selectedShipId || !selectedSkinId || !name) return
+    if (!name) { nameInput.focus(); return }
+    if (!selectedShipId || !selectedSkinId) return
     localStorage.setItem('drifts_name', name)
     preview.destroy()
     overlay.remove()
     onSelect(selectedShipId, selectedSkinId, name)
   })
+}
+
+function fmtDings(v: number): string {
+  return (v % 1 === 0 ? `${v}` : `${v.toFixed(1)}`) + ' Dings'
 }
 
 function escapeHtml(s: string): string {
