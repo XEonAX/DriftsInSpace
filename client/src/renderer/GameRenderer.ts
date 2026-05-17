@@ -87,6 +87,12 @@ export class GameRenderer {
   private remoteShipTextures: Map<string, Texture> = new Map()
   private remotePlayers: Map<number, RemotePlayerView> = new Map()
   private debugText!: Text
+  private statsText!: Text
+  private countdownText!: Text
+  // ── HUD state fed by Game.ts ──────────────────────────────────────────────
+  private hudLap       = 1
+  private hudTotalLaps = 1
+  private hudTimeMs    = 0
 
   async init(canvas: HTMLCanvasElement, skinId: string): Promise<void> {
     this.app = new Application()
@@ -156,6 +162,32 @@ export class GameRenderer {
     this.debugText = new Text({ text: '', style })
     this.debugText.position.set(8, 8)
     this.app.stage.addChild(this.debugText)
+
+    // ─── Stats HUD (top-right) ─────────────────────────────────────────────
+    const statsStyle = new TextStyle({
+      fill: '#ffffff',
+      fontSize: 28,
+      fontFamily: 'monospace',
+      align: 'right',
+      dropShadow: { distance: 2, blur: 6, alpha: 0.9, angle: Math.PI / 4, color: '#000000' },
+    })
+    this.statsText = new Text({ text: '', style: statsStyle })
+    this.statsText.anchor.set(1, 0)
+    this.app.stage.addChild(this.statsText)
+
+    // ─── Countdown overlay (centre screen) ────────────────────────────────
+    const cdStyle = new TextStyle({
+      fill: '#ffffff',
+      fontSize: 120,
+      fontFamily: 'monospace',
+      fontWeight: 'bold',
+      align: 'center',
+      dropShadow: { distance: 3, blur: 12, alpha: 1.0, angle: Math.PI / 4, color: '#000000' },
+    })
+    this.countdownText = new Text({ text: '', style: cdStyle })
+    this.countdownText.anchor.set(0.5)
+    this.countdownText.visible = false
+    this.app.stage.addChild(this.countdownText)
   }
 
   /** Resize background to match window. Called on window resize. */
@@ -442,6 +474,38 @@ export class GameRenderer {
     return result
   }
 
+  /**
+   * Drive the centre-screen countdown display.
+   * sec > 0  → show digit (3 / 2 / 1)
+   * sec in (-0.7, 0] → show "GO!"
+   * sec < -0.7 → hide
+   */
+  setCountdown(sec: number): void {
+    if (sec > 0) {
+      this.countdownText.text    = String(Math.ceil(sec))
+      this.countdownText.tint    = sec <= 1 ? 0x44ff88 : 0xffffff
+      this.countdownText.visible = true
+    } else if (sec > -0.7) {
+      this.countdownText.text    = 'GO!'
+      this.countdownText.tint    = 0x44ff88
+      this.countdownText.visible = true
+    } else {
+      this.countdownText.visible = false
+      return
+    }
+    this.countdownText.position.set(
+      this.app.screen.width  / 2,
+      this.app.screen.height / 2 - 40,
+    )
+  }
+
+  /** Update the race stats shown in the top-right HUD. */
+  setHudStats(lap: number, totalLaps: number, timeMs: number): void {
+    this.hudLap       = lap
+    this.hudTotalLaps = totalLaps
+    this.hudTimeMs    = timeMs
+  }
+
   /** Store the latest input so render() can drive thruster FX. */
   setInput(input: InputState): void {
     this.lastInput = input
@@ -618,6 +682,16 @@ export class GameRenderer {
     this.debugText.text =
       `pos: (${ship.pos.x.toFixed(1)}, ${ship.pos.y.toFixed(1)})  spd: ${speed.toFixed(1)} u/s  accel: ${accel.toFixed(1)} u/s²\n` +
       `ang: ${angDeg.toFixed(0)}°  ω: ${omegaDeg.toFixed(1)}°/s  α: ${alphaDeg.toFixed(1)}°/s²`
+
+    // ─── Stats HUD (top-right) ────────────────────────────────────────────
+    const ms   = Math.max(0, this.hudTimeMs)
+    const mm   = Math.floor(ms / 60000)
+    const ss   = Math.floor((ms % 60000) / 1000)
+    const mmm  = Math.floor(ms % 1000)
+    const timeStr = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}:${String(mmm).padStart(3, '0')}`
+    const lapStr  = `${String(this.hudLap).padStart(2, '0')} / ${String(this.hudTotalLaps).padStart(2, '0')} Laps`
+    this.statsText.text   = `${timeStr}\n${speed.toFixed(0)} u/s\n${lapStr}`
+    this.statsText.position.set(W - 16, 16)
   }
 
   // ─── Remote player management ─────────────────────────────────────────────

@@ -40,7 +40,13 @@ export class Game {
   private net = new NetClient()
   private netTick = 0
   private readonly displayName: string
-  // No per-prop boolean state needed — all props now use continuous proximity
+  // ── Race timer + lap tracking ─────────────────────────────────────────────────
+  private raceStartTime = -1    // rAF timestamp when countdown ends
+  private raceEndTime   = 0     // rAF timestamp when race finished
+  private trackLaps     = 1     // total laps (≥1)
+  private trackCpCount  = 0     // checkpoints per lap
+  private countdownSec  = 3.0   // counts down to 0; goes slightly negative for GO! display
+  private _loopTimestamp = 0    // current rAF timestamp, available to helpers
 
   constructor(shipId: string, skinId: string, displayName: string) {
     this.shipId = shipId
@@ -86,6 +92,13 @@ export class Game {
     this.lastPassedIdx     = -1
     this.renderer.setCheckpointState(this.route[0]?.originalIdx ?? -1, this.passedCheckpoints, -1)
 
+    // ── Race timer init ───────────────────────────────────────────────────────────
+    this.raceStartTime  = -1
+    this.raceEndTime    = 0
+    this.countdownSec   = 3.0
+    this.trackLaps      = Math.max(1, level.Track.Laps)
+    this.trackCpCount   = Math.max(1, level.Track.Checkpoints.length)
+
     // Handle window resize
     window.addEventListener('resize', () => {
       this.renderer.resizeBg()
@@ -95,7 +108,7 @@ export class Game {
 
     this.running = true
     this.lastTime = performance.now()
-    this.rafId = requestAnimationFrame(this.loop)
+    this.rafId = requestAnimationFrame(this.countdownLoop)
 
     const details = shipData.ShipDetails
 
@@ -141,11 +154,36 @@ export class Game {
 
   private prevShipState: ShipState = createShipState()
 
+  /** Runs during the 3-second countdown: ticks the display, renders the static scene, no physics/audio. */
+  private countdownLoop = (timestamp: number): void => {
+    if (!this.running) return
+    const elapsed = Math.min((timestamp - this.lastTime) / 1000, 0.1)
+    this.lastTime = timestamp
+    this.countdownSec -= elapsed
+    this.renderer.setCountdown(this.countdownSec)
+    this.renderer.render(this.shipState)
+    this.touchOverlay.setStyle(this.input.currentTouchStyle)
+    this.touchOverlay.update(0, false, false)
+    if (this.countdownSec <= -0.7) {
+      // Hand off to the main loop
+      this.renderer.setCountdown(-1)
+      this.raceStartTime  = timestamp
+      this.lastTime       = timestamp
+      this.accumulator    = 0
+      this.prevShipState  = this.shipState
+      this.rafId = requestAnimationFrame(this.loop)
+    } else {
+      this.rafId = requestAnimationFrame(this.countdownLoop)
+    }
+  }
+
   private loop = (timestamp: number): void => {
     if (!this.running) return
 
+    this._loopTimestamp = timestamp
     const elapsed = Math.min((timestamp - this.lastTime) / 1000, 0.1) // cap at 100ms
     this.lastTime = timestamp
+
     this.accumulator += elapsed
 
     const details = this._details
@@ -199,7 +237,14 @@ export class Game {
     }
 
     this.renderer.render(interpolated)
-
+    // ── Stats HUD ────────────────────────────────────────────────────────────────────
+    const raceTimeMs = this.raceStartTime < 0
+      ? 0
+      : this.raceFinished
+        ? this.raceEndTime - this.raceStartTime
+        : timestamp - this.raceStartTime
+    const currentLap   = Math.min(this.trackLaps, Math.floor(this.routeIdx / this.trackCpCount) + 1)
+    this.renderer.setHudStats(currentLap, this.trackLaps, raceTimeMs)
     // ── Touch overlay visual update ───────────────────────────────────────
     this.touchOverlay.setStyle(this.input.currentTouchStyle)
     if (this.input.hasTouches) {
@@ -291,6 +336,7 @@ export class Game {
     const finished = this.routeIdx >= this.route.length
     if (finished) {
       this.raceFinished = true
+      this.raceEndTime  = this._loopTimestamp
       console.log('Race finished!')
     }
     this.audio.playCheckpoint(finished ? 1.5 : 1.0)
