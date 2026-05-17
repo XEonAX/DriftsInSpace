@@ -18,7 +18,8 @@ import { OBSTACLE_SIZE, OBSTACLE_COLLISION_SIZE, OBSTACLE_FORCE_ZONES, OBSTACLE_
 // ─── Obstacle physics materials ──────────────────────────────────────────────
 // Raw values from ANXRacers/Assets/Materials/*.physicsMaterial2D.
 // These are the OBSTACLE side only.
-// The combined value = Average(ship, obstacle) — Unity's default combine mode.
+// Friction combine: Minimum (deviation from Unity's Mean default — makes ice truly frictionless).
+// Bounce combine: Maximum (Unity's default for PhysicsMaterial2D).
 // Ship-side values come from ShipDetails.Friction / ShipDetails.Bounce (per-ship JSON).
 // Spaceship.physicsMaterial2D defaults (friction=0.4, bounce=0.3) are used as
 // fallback when a ship JSON doesn't include those fields.
@@ -334,9 +335,11 @@ export function resolveCollisions(
   const hits: Array<{ nx: number; ny: number; friction: number; impactSpeed: number }> = []
 
   for (const col of colliders) {
-    // Unity Average combine: combined = (ship + obstacle) / 2
-    const friction = (shipFriction + col.friction) / 2
-    const bounce   = (shipBounce   + col.bounce)   / 2
+    // Friction: Minimum combine (intentional deviation from Unity's Mean default) —
+    //   ensures ice (friction=0) is truly frictionless regardless of ship material.
+    // Bounce: Maximum combine = Unity's default for PhysicsMaterial2D.
+    const friction = Math.min(shipFriction, col.friction)
+    const bounce   = Math.max(shipBounce,   col.bounce)
     let result: CollisionResult | null
 
     if (col.type === 'capsule') {
@@ -460,7 +463,9 @@ export function applyProps(
     if (p.Type === 'Boost') {
       // AreaEffector2D: continuous force while ship is within radius.
       // ForceAngle=90 = local +Y. UseGlobalAngle=0 → rotated by prop orientation.
-      if (dist2 >= BOOST_RADIUS * BOOST_RADIUS) continue
+      // Add ship radius so trigger fires when ship edge hits the ring (Unity behaviour).
+      const boostTrigger = BOOST_RADIUS + details.Radius
+      if (dist2 >= boostTrigger * boostTrigger) continue
       const propAngle = quatToAngle(p.Transform.Rotation)
       // Local +Y rotated by propAngle: wx=-sin(a)*0+cos(a)*1... in Y-up: fwx=sin(a), fwy=cos(a)
       // (same formula as AreaEffector2D force zones: localAngleDeg=90)
@@ -472,7 +477,9 @@ export function applyProps(
       // PointEffector2D: only applies force inside the CircleCollider2D trigger.
       // Attractor: root scale (2,2) × m_Radius 2 → world r=4.
       // Repulsor:  root scale (1,1) × m_Radius 2 → world r=2.
-      const ATTRACTOR_REPULSOR_RADIUS = p.Type === 'Attractor' ? 4 : 2
+      // Add ship radius so trigger fires when ship edge hits the ring (Unity behaviour).
+      const baseR = p.Type === 'Attractor' ? 4 : 2
+      const ATTRACTOR_REPULSOR_RADIUS = baseR + details.Radius
       if (dist2 >= ATTRACTOR_REPULSOR_RADIUS * ATTRACTOR_REPULSOR_RADIUS) continue
       if (dist2 < 1e-6) continue
       const dist = Math.sqrt(dist2)

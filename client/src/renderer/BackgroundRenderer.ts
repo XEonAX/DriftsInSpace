@@ -21,15 +21,15 @@ import { PIXELS_PER_UNIT } from '../physics/ShipPhysics'
 // All values are linear RGB in [0, 1]. Edit here to retheme the background.
 
 // Stars
-const STAR_COLOR_WARM = [1.00, 0.88, 0.70] as const  // yellowish warm stars
-const STAR_COLOR_COOL = [0.70, 0.88, 1.00] as const  // bluish cool stars
+const STAR_COLOR_WARM = [1.00, 0.82, 0.35] as const  // gold/amber stars — ANXRacers accent colour
+const STAR_COLOR_COOL = [0.68, 0.45, 1.00] as const  // soft violet stars
 
 // Nebula
-const NEBULA_COLOR_RED  = [0.55, 0.05, 0.08] as const  // dark crimson region
-const NEBULA_COLOR_BLUE = [0.04, 0.08, 0.38] as const  // dark blue-purple region
+const NEBULA_COLOR_RED  = [0.32, 0.05, 0.65] as const  // rich purple cloud region
+const NEBULA_COLOR_BLUE = [0.10, 0.02, 0.42] as const  // deep violet cloud region
 
 // Fog
-const FOG_COLOR = [0, 0, 0] as const  // near-black dark wisps
+const FOG_COLOR = [0.06, 0.01, 0.14] as const  // faint purple-black wisps
 
 // ─── Background scale / density constants ─────────────────────────────────
 
@@ -48,7 +48,7 @@ const NEBULA_UV_SCALE  = 0.55
 // FBM frequency multiplier applied on top of UV scale.
 const NEBULA_FBM_FREQ  = 2.5
 // How aggressively to threshold + brighten nebula patches (contrast).
-const NEBULA_CONTRAST  = 2.2
+const NEBULA_CONTRAST  = 3.2
 
 // Fog
 // Overall UV scale — lower = larger fog patches.
@@ -58,9 +58,9 @@ const FOG_FBM_FREQ   = 3.0
 // Threshold below which fog is invisible (0–1). Higher = sparser wisps.
 const FOG_THRESHOLD  = 0.4
 // Alpha multiplier — controls how opaque the fog wisps are.
-const FOG_OPACITY = 0.4
+const FOG_OPACITY = 0.55
 // Max Fog alpha is also clamped in shader to prevent excessively bright wisps when contrast is high.
-const FOG_MAX_ALPHA = 0.5
+const FOG_MAX_ALPHA = 0.65
 
 /** Format a colour constant as a GLSL vec3 literal. */
 function v3(c: readonly [number, number, number]): string {

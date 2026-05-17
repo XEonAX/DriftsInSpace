@@ -495,7 +495,7 @@ export class GameRenderer {
     }
     this.countdownText.position.set(
       this.app.screen.width  / 2,
-      this.app.screen.height / 2 - 40,
+      this.app.screen.height / 2 + 140,
     )
   }
 

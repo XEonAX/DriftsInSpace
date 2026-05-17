@@ -328,7 +328,10 @@ export class Game {
     const target = this.route[this.routeIdx]
     const dx = this.shipState.pos.x - target.transform.Position.x
     const dy = this.shipState.pos.y - target.transform.Position.y
-    if (dx * dx + dy * dy > this.cpRadius * this.cpRadius) return
+    // Add ship radius so trigger fires when ship edge hits the ring (Unity behaviour).
+    const shipRadius = this._details?.Radius ?? 0
+    const effectiveCpR = this.cpRadius + shipRadius
+    if (dx * dx + dy * dy > effectiveCpR * effectiveCpR) return
 
     this.lastPassedIdx = target.originalIdx
     this.passedCheckpoints.add(target.originalIdx)

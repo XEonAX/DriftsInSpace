@@ -102,6 +102,8 @@ export async function showShipPicker(
   }
 
   let playerName = localStorage.getItem('drifts_name') ?? ''
+  const savedShipId = localStorage.getItem('drifts_ship')
+  const savedSkinId = localStorage.getItem('drifts_skin')
 
   const overlay = document.createElement('div')
   overlay.id = 'ship-picker'
@@ -212,6 +214,7 @@ export async function showShipPicker(
         skinList.querySelectorAll('.sp-row').forEach(r => r.classList.remove('selected'))
         row.classList.add('selected')
         selectedSkinId = skin.skinId
+        localStorage.setItem('drifts_skin', skin.skinId)
         preview.load(
           `/assets/ships/${skin.skinId}.png`,
           `/assets/ships/${skin.skinId}.skin.json`,
@@ -220,7 +223,8 @@ export async function showShipPicker(
       })
       skinList.appendChild(row)
     })
-    const first = skinList.querySelector('.sp-row') as HTMLElement | null
+    const prefSkin = (savedSkinId ? skinList.querySelector(`[data-id="${savedSkinId}"]`) : null) as HTMLElement | null
+    const first = (prefSkin ?? skinList.querySelector('.sp-row')) as HTMLElement | null
     if (first) first.click()
   }
 
@@ -243,6 +247,7 @@ export async function showShipPicker(
       shipList.querySelectorAll('.sp-row').forEach(r => r.classList.remove('selected'))
       row.classList.add('selected')
       selectedShipId = ship.ShipId
+      localStorage.setItem('drifts_ship', ship.ShipId)
       previewStats.innerHTML = STAT_DEFS.map(({ key, label }) => {
         const val = d[key]
         const max = statMax[key]
@@ -262,7 +267,7 @@ export async function showShipPicker(
   })
 
   const falconId = '00000002-f00d-feed-bee5-ba51c5b0d1ce'
-  const defaultRow = (shipList.querySelector(`[data-id="${falconId}"]`) ??
+  const defaultRow = (shipList.querySelector(`[data-id="${savedShipId ?? falconId}"]`) ??
                      shipList.querySelector('.sp-row')) as HTMLElement | null
   defaultRow?.click()
 
