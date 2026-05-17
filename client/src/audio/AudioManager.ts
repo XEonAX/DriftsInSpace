@@ -32,6 +32,7 @@ const SOUNDS = {
   driftLoop:       '/assets/sounds/driftLoop.ogg',
   driftStart:      '/assets/sounds/driftStart.ogg',
   driftFlow:       '/assets/sounds/driftFlow.ogg',
+  checkpoint:      '/assets/sounds/checkpoint.ogg',
 } as const
 
 // ─── Volume constants (master mixing levels) ──────────────────────────────
@@ -79,6 +80,9 @@ export class AudioManager {
   private boostEngineBuf:    AudioBuffer | null = null
   private attractorEngineBuf: AudioBuffer | null = null
   private repulsorEngineBuf:  AudioBuffer | null = null
+
+  // Checkpoint one-shot
+  private checkpointBuf: AudioBuffer | null = null
 
   private boostEngineNode:    AudioBufferSourceNode | null = null
   private attractorEngineNode: AudioBufferSourceNode | null = null
@@ -134,7 +138,8 @@ export class AudioManager {
       this.load(SOUNDS.repulsorEngine).then(b => { this.repulsorEngineBuf = b }),
       this.load(SOUNDS.driftLoop).then(b => { this.driftLoopBuf = b }),
       this.load(SOUNDS.driftStart).then(b => { this.driftStartBuf = b }),
-      this.load(SOUNDS.driftFlow).then(b => { this.driftFlowBuf = b }),    
+      this.load(SOUNDS.driftFlow).then(b => { this.driftFlowBuf = b }),
+      this.load(SOUNDS.checkpoint).then(b => { this.checkpointBuf = b }),
     ])
 
     this.startEngine()
@@ -275,6 +280,19 @@ export class AudioManager {
     gain.connect(this.masterGain)
     const src = this.ctx.createBufferSource()
     src.buffer = this.driftStartBuf
+    src.connect(gain)
+    src.start()
+    src.onended = () => gain.disconnect()
+  }
+
+  playCheckpoint(pitch = 1.0): void {
+    if (!this.checkpointBuf) return
+    const gain = this.ctx.createGain()
+    gain.gain.value = 0.85
+    gain.connect(this.masterGain)
+    const src = this.ctx.createBufferSource()
+    src.buffer = this.checkpointBuf
+    src.playbackRate.value = pitch
     src.connect(gain)
     src.start()
     src.onended = () => gain.disconnect()

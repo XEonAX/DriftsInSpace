@@ -3,7 +3,8 @@ import { InputManager } from '../input/InputManager'
 import { stepShip, createShipState, FIXED_DT } from '../physics/ShipPhysics'
 import type { ShipState } from '../physics/ShipPhysics'
 import { loadShipData } from '../data/ships'
-import { loadLevel, DEFAULT_LEVEL_ID } from '../data/levels'
+import { loadLevel, DEFAULT_LEVEL_ID, checkpointRadius, buildCheckpointRoute } from '../data/levels'
+import type { ObstacleTransform } from '../data/levels'
 import { buildColliders, buildForceZones, resolveCollisions, applyForceZones, applyProps, initialPropState, frictionToMaterial } from '../physics/Collision'
 import type { ObstacleCollider, ForceZone, PropState } from '../physics/Collision'
 import type { Prop } from '../data/levels'
@@ -28,6 +29,13 @@ export class Game {
   private forceZones: ForceZone[] = []
   private props: Prop[] = []
   private propState: PropState = initialPropState()
+  // ── Checkpoint route ───────────────────────────────────────────────────────
+  private route: Array<{ transform: ObstacleTransform; originalIdx: number }> = []
+  private cpRadius = 2                      // Unity units; set from level difficulty
+  private routeIdx  = 0                     // index into route[] of the next checkpoint to hit
+  private raceFinished = false
+  private passedCheckpoints = new Set<number>()  // original indices already triggered
+  private lastPassedIdx = -1                     // original index most recently triggered
   private audioStarted = false
   private net = new NetClient()
   private netTick = 0
@@ -68,6 +76,15 @@ export class Game {
     this.forceZones = buildForceZones(level.Obstacles)
     this.props = level.Props
     this.propState = initialPropState()
+
+    // ── Checkpoint route ─────────────────────────────────────────────────────
+    this.route            = buildCheckpointRoute(level.Track)
+    this.cpRadius         = checkpointRadius(level.Track.Difficulty)
+    this.routeIdx         = 0
+    this.raceFinished     = false
+    this.passedCheckpoints = new Set<number>()
+    this.lastPassedIdx     = -1
+    this.renderer.setCheckpointState(this.route[0]?.originalIdx ?? -1, this.passedCheckpoints, -1)
 
     // Handle window resize
     window.addEventListener('resize', () => {
@@ -154,6 +171,7 @@ export class Game {
             this.audio.playCollision(mat, h.impactSpeed)
           }
         }
+        this.checkCheckpoint()
         this.accumulator -= FIXED_DT
         // Send our state to the server every physics tick (50 Hz)
         this.net.sendShipUpdate(
@@ -258,6 +276,26 @@ export class Game {
     }
 
     this.rafId = requestAnimationFrame(this.loop)
+  }
+
+  private checkCheckpoint(): void {
+    if (this.raceFinished || this.route.length === 0) return
+    const target = this.route[this.routeIdx]
+    const dx = this.shipState.pos.x - target.transform.Position.x
+    const dy = this.shipState.pos.y - target.transform.Position.y
+    if (dx * dx + dy * dy > this.cpRadius * this.cpRadius) return
+
+    this.lastPassedIdx = target.originalIdx
+    this.passedCheckpoints.add(target.originalIdx)
+    this.routeIdx++
+    const finished = this.routeIdx >= this.route.length
+    if (finished) {
+      this.raceFinished = true
+      console.log('Race finished!')
+    }
+    this.audio.playCheckpoint(finished ? 1.5 : 1.0)
+    const nextOriginalIdx = finished ? -1 : this.route[this.routeIdx].originalIdx
+    this.renderer.setCheckpointState(nextOriginalIdx, this.passedCheckpoints, this.lastPassedIdx)
   }
 
   /** Stable anonymous user ID, stored in localStorage. */

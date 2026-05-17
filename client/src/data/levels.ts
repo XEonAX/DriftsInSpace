@@ -16,11 +16,48 @@ export interface Prop {
   Transform: ObstacleTransform
 }
 
+export interface TrackData {
+  Laps: number
+  Difficulty: number
+  Checkpoints: ObstacleTransform[]
+}
+
 export interface LevelData {
   LevelId: string
   LevelName: string
+  Track: TrackData
   Obstacles: Obstacle[]
   Props: Prop[]
+}
+
+/**
+ * Checkpoint circle radius in Unity units.
+ * Matches Checkpoint.cs: radius = 1 / difficulty.
+ * Difficulty 0 is treated as 0.5 (same default as Track.cs).
+ */
+export function checkpointRadius(difficulty: number): number {
+  return 1 / (difficulty > 0 ? difficulty : 0.5)
+}
+
+/**
+ * Build the flat ordered route the player must follow.
+ * Mirrors Track.cs Load():
+ *   - Always add all checkpoints once.
+ *   - If Laps > 1: repeat all checkpoints for additional laps.
+ *   - If Laps > 0: append Checkpoints[0] as the final finish gate.
+ * For Laps = 0: finish is the last checkpoint (single-pass layout).
+ */
+export function buildCheckpointRoute(track: TrackData): Array<{ transform: ObstacleTransform; originalIdx: number }> {
+  const cps = track.Checkpoints
+  if (cps.length === 0) return []
+  const route: Array<{ transform: ObstacleTransform; originalIdx: number }> = []
+  for (let i = 0; i < cps.length; i++) route.push({ transform: cps[i], originalIdx: i })
+  if (track.Laps > 1) {
+    for (let lap = 1; lap < track.Laps; lap++)
+      for (let i = 0; i < cps.length; i++) route.push({ transform: cps[i], originalIdx: i })
+  }
+  if (track.Laps > 0) route.push({ transform: cps[0], originalIdx: 0 })
+  return route
 }
 
 /** Convert Unity quaternion (2D rotation around Z) to radians (CCW from +Y). */
@@ -122,4 +159,4 @@ export async function loadLevel(levelId: string): Promise<LevelData> {
   return res.json()
 }
 
-export const DEFAULT_LEVEL_ID = '000000c2-c291-4a9e-9555-d6cc5f995f62' // Alpha-2
+export const DEFAULT_LEVEL_ID = '000000b1-cda7-46cb-ab2c-f43763c106d8' // Alpha-2

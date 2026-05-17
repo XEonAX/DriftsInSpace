@@ -10,7 +10,7 @@ import {
 import { PIXELS_PER_UNIT } from '../physics/ShipPhysics'
 import type { ShipState, InputState } from '../physics/ShipPhysics'
 import type { LevelData, Obstacle, Prop } from '../data/levels'
-import { OBSTACLE_SIZE, quatToAngle } from '../data/levels'
+import { OBSTACLE_SIZE, quatToAngle, checkpointRadius } from '../data/levels'
 import { ThrusterFX } from './ThrusterFX'
 import type { ShipSkinData } from './ThrusterFX'
 import { loadShipData } from '../data/ships'
@@ -70,6 +70,10 @@ export class GameRenderer {
   private shipSprite!: Sprite
   private obstacleSprites: Sprite[] = []
   private propSprites: Sprite[] = []
+  private checkpointRings: Sprite[] = []        // ring behind each checkpoint
+  private checkpointCircles: Sprite[] = []      // circle text sprite per checkpoint
+  private checkpointArrows: Sprite[][] = []     // arrows per checkpoint (1 regular, 3 finish, 0 none)
+  private checkpointFinishIdx = -1              // original index that is the finish gate
   private thrusterFX!: ThrusterFX
   private propParticles = new PropParticleFX()
   private shieldSprite!: Sprite          // static ring, always visible
@@ -239,6 +243,85 @@ export class GameRenderer {
       }
     }
 
+    // ─── Checkpoints ────────────────────────────────────────────────────────
+    for (const s of this.checkpointRings)  this.worldContainer.removeChild(s)
+    this.checkpointRings = []
+    for (const s of this.checkpointCircles) this.worldContainer.removeChild(s)
+    this.checkpointCircles = []
+    for (const arrs of this.checkpointArrows) for (const a of arrs) this.worldContainer.removeChild(a)
+    this.checkpointArrows = []
+    this.checkpointFinishIdx = -1
+
+    if (level.Track?.Checkpoints?.length) {
+      const track    = level.Track
+      const cpRadius = checkpointRadius(track.Difficulty)
+      const cpPx     = cpRadius * PIXELS_PER_UNIT
+      const arrowPx  = Math.max(PIXELS_PER_UNIT, cpPx * 0.7)
+
+      // Finish gate: Laps>0 → index 0 (start/finish); Laps===0 → last checkpoint.
+      this.checkpointFinishIdx = track.Laps > 0 ? 0 : track.Checkpoints.length - 1
+
+      const [cpCircleTex, finishCircleTex, cpArrowTex, cpRingTex] = await Promise.all([
+        Assets.load('/assets/textures/CircularCheckpointText.png'),
+        Assets.load('/assets/textures/CircularFinishText.png'),
+        Assets.load('/assets/textures/CheckpointArrow.png'),
+        Assets.load('/assets/textures/Ring128.png'),
+      ])
+
+      for (let i = 0; i < track.Checkpoints.length; i++) {
+        const cp       = track.Checkpoints[i]
+        const { x, y } = worldToLocal(cp.Position.x, cp.Position.y)
+        const isFinish  = i === this.checkpointFinishIdx
+
+        // ── Arrows added first (addChildAt(0) = bottom), so they end up on top ──
+        // Regular checkpoint: 1 arrow oriented along the prop rotation.
+        // Finish gate: 3 arrows pointing inward at 120° separation.
+        const arrows: Sprite[] = []
+        if (isFinish) {
+          const offsetR = cpPx * 0.45
+          for (let a = 0; a < 3; a++) {
+            const θ     = (a * 2 * Math.PI) / 3
+            const arrow = new Sprite(cpArrowTex)
+            arrow.anchor.set(0.5)
+            arrow.width  = arrowPx
+            arrow.height = arrowPx
+            arrow.position.set(x + Math.sin(θ) * offsetR, y - Math.cos(θ) * offsetR)
+            arrow.rotation = θ + Math.PI   // point toward center
+            this.worldContainer.addChildAt(arrow, 0)
+            arrows.push(arrow)
+          }
+        } else {
+          const arrow = new Sprite(cpArrowTex)
+          arrow.anchor.set(0.5)
+          arrow.width  = arrowPx
+          arrow.height = arrowPx
+          arrow.position.set(x, y)
+          arrow.rotation = gameAngleToPixi(quatToAngle(cp.Rotation))
+          this.worldContainer.addChildAt(arrow, 0)
+          arrows.push(arrow)
+        }
+        this.checkpointArrows.push(arrows)
+
+        // ── Circle sprite (on top of ring, behind arrows) ─────────────────────
+        const circ = new Sprite(isFinish ? finishCircleTex : cpCircleTex)
+        circ.anchor.set(0.5)
+        circ.width  = cpPx * 2
+        circ.height = cpPx * 2
+        circ.position.set(x, y)
+        this.worldContainer.addChildAt(circ, 0)
+        this.checkpointCircles.push(circ)
+
+        // ── Ring sprite (goes to bottom — drawn behind circle and arrows) ──────
+        const ring = new Sprite(cpRingTex)
+        ring.anchor.set(0.5)
+        ring.width  = cpPx * 2
+        ring.height = cpPx * 2
+        ring.position.set(x, y)
+        this.worldContainer.addChildAt(ring, 0)
+        this.checkpointRings.push(ring)
+      }
+    }
+
     // ─── Particle FX container ─ inserted at the very bottom so particles
     // appear behind prop rings, obstacles, and the ship. ──────────────────
     if (this.propParticles.container.parent) {
@@ -246,6 +329,45 @@ export class GameRenderer {
     }
     this.worldContainer.addChildAt(this.propParticles.container, 0)
     this.propParticles.loadLevel(level.Props)
+  }
+
+  /**
+   * Update checkpoint visual state after each trigger or on level load.
+   * nextOriginalIdx: original index of the checkpoint to hit next (-1 = race done).
+   * passedSet: set of original indices already triggered.
+   * Colours match ANXRacers Track.cs: CurrentColor=green (next target),
+   * PastColor=red (already triggered), unvisited=white/dim.
+   */
+  setCheckpointState(nextOriginalIdx: number, passedSet: ReadonlySet<number>, lastPassedIdx: number): void {
+    const GREEN  = 0x44ff55   // next target
+    const YELLOW = 0xffdd00   // most recently passed
+    const RED    = 0xff4444   // previously passed
+    const WHITE  = 0xffffff   // unvisited
+
+    for (let i = 0; i < this.checkpointCircles.length; i++) {
+      const ring = this.checkpointRings[i]
+      const circ = this.checkpointCircles[i]
+      const arrs = this.checkpointArrows[i]
+
+      const isNext       = i === nextOriginalIdx
+      const isLastPassed = !isNext && i === lastPassedIdx
+      const isPassed     = !isNext && !isLastPassed && passedSet.has(i)
+
+      const color      = isNext ? GREEN : isLastPassed ? YELLOW : isPassed ? RED  : WHITE
+      const circAlpha  = isNext ? 0.95  : isLastPassed ? 0.80   : isPassed ? 0.55 : 0.28
+      const ringAlpha  = isNext ? 0.45  : isLastPassed ? 0.35   : isPassed ? 0.25 : 0.12
+      const arrowAlpha = isNext ? 1.0   : isLastPassed ? 0.90   : isPassed ? 0.55 : 0.28
+
+      ring.tint  = color
+      ring.alpha = ringAlpha
+      circ.tint  = color
+      circ.alpha = circAlpha
+
+      for (const a of arrs) {
+        a.tint  = color
+        a.alpha = arrowAlpha
+      }
+    }
   }
 
   private createObstacleSprite(obs: Obstacle, texture: Texture): Sprite {
