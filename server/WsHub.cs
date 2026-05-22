@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
 
@@ -20,8 +21,9 @@ public class WsHub
     private volatile uint _nextMPId = 1;
     private uint _elapsedMs;
 
-    // Queue of received raw messages to process on the receive timer
-    private readonly ConcurrentQueue<(uint mpId, byte[] data)> _incoming = new();
+    // Queue of received raw messages to process on the receive timer.
+    // Buffers are rented from ArrayPool and returned after processing.
+    private readonly ConcurrentQueue<IncomingMessage> _incoming = new();
 
     public WsHub(ILogger<WsHub> logger) => _log = logger;
 
@@ -79,10 +81,11 @@ public class WsHub
                 if (result.MessageType == WebSocketMessageType.Close) break;
                 if (result.Count == 0) continue;
 
-                // Copy into fresh array so the queue holds independent data
-                var msg = new byte[result.Count];
+                // Copy into a pooled buffer so queue items are independent
+                // without allocating a new byte[] each packet.
+                var msg = ArrayPool<byte>.Shared.Rent(result.Count);
                 Buffer.BlockCopy(recvBuf, 0, msg, 0, result.Count);
-                _incoming.Enqueue((mpId, msg));
+                _incoming.Enqueue(new IncomingMessage(mpId, msg, result.Count));
             }
         }
         catch (WebSocketException ex) when (ex.WebSocketErrorCode == WebSocketError.ConnectionClosedPrematurely)
@@ -113,21 +116,31 @@ public class WsHub
     {
         while (_incoming.TryDequeue(out var item))
         {
-            var (mpId, data) = item;
-            if (data.Length == 0) continue;
-
-            switch (data[0])
+            if (item.Length == 0)
             {
-                case PacketType.ShipUpdate:
-                    if (!_players.TryGetValue(mpId, out var player)) break;
-                    int off = 1;
-                    var update = ShipUpdatePacket.Read(data, ref off);
-                    update.MPId = mpId; // always trust server-side MPId
-                    player.State = update;
-                    break;
-                default:
-                    _log.LogDebug("Unknown packet type {T} from MPId={MPId}", data[0], mpId);
-                    break;
+                ArrayPool<byte>.Shared.Return(item.Buffer);
+                continue;
+            }
+
+            try
+            {
+                switch (item.Buffer[0])
+                {
+                    case PacketType.ShipUpdate:
+                        if (!_players.TryGetValue(item.MPId, out var player)) break;
+                        int off = 1;
+                        var update = ShipUpdatePacket.Read(item.Buffer, ref off);
+                        update.MPId = item.MPId; // always trust server-side MPId
+                        player.State = update;
+                        break;
+                    default:
+                        _log.LogDebug("Unknown packet type {T} from MPId={MPId}", item.Buffer[0], item.MPId);
+                        break;
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(item.Buffer);
             }
         }
     }
@@ -139,15 +152,18 @@ public class WsHub
 
         if (_clients.IsEmpty) return;
 
-        var packet = new PlayerStatesPacket
-        {
-            ServerTimeMs = _elapsedMs,
-            States       = _players.Values.Select(p => p.State).ToArray(),
-        };
-        var buf = packet.Serialize();
+        // Build PlayerStates directly to avoid per-tick object and array allocations.
+        var count = _players.Count;
+        var buf = new byte[1 + 4 + 4 + count * ShipUpdatePacket.Size];
+        int off = 0;
+        buf[off++] = PacketType.PlayerStates;
+        PacketWriter.WriteUInt32(buf, ref off, _elapsedMs);
+        PacketWriter.WriteUInt32(buf, ref off, (uint)count);
+        foreach (var p in _players.Values)
+            p.State.Write(buf, ref off);
 
-        // Fire-and-forget: errors are caught per-client below
-        _ = BroadcastAllAsync(buf, CancellationToken.None);
+        // Fire-and-forget latest-state fanout; stale sends are dropped per client.
+        BroadcastAllStates(buf);
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -163,7 +179,19 @@ public class WsHub
             if (id != excludeMPId)
                 await client.SendAsync(buf, ct);
     }
+
+    private void BroadcastAllStates(byte[] buf)
+    {
+        foreach (var (_, client) in _clients)
+        {
+            // If a client is still sending a previous state frame, drop this one.
+            // State packets are transient, so latest-wins keeps latency stable.
+            client.TrySendLatest(buf);
+        }
+    }
 }
+
+internal readonly record struct IncomingMessage(uint MPId, byte[] Buffer, int Length);
 
 /// <summary>
 /// Wraps a WebSocket with a send lock (WebSocket.SendAsync is not thread-safe).
@@ -183,6 +211,31 @@ internal sealed class ConnectedClient(uint mpId, WebSocket ws)
             await _ws.SendAsync(buf, WebSocketMessageType.Binary, true, ct);
         }
         catch (Exception) { /* connection already closed */ }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public bool TrySendLatest(byte[] buf)
+    {
+        if (_ws.State != WebSocketState.Open) return false;
+        if (!_lock.Wait(0)) return false;
+
+        _ = SendLatestWithHeldLockAsync(buf);
+        return true;
+    }
+
+    private async Task SendLatestWithHeldLockAsync(byte[] buf)
+    {
+        try
+        {
+            if (_ws.State != WebSocketState.Open) return;
+            await _ws.SendAsync(buf, WebSocketMessageType.Binary, true, CancellationToken.None);
+        }
+        catch (Exception)
+        {
+        }
         finally
         {
             _lock.Release();
