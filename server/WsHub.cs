@@ -152,18 +152,33 @@ public class WsHub
 
         if (_clients.IsEmpty) return;
 
-        // Build PlayerStates directly to avoid per-tick object and array allocations.
-        var count = _players.Count;
-        var buf = new byte[1 + 4 + 4 + count * ShipUpdatePacket.Size];
+        // Build PlayerStates directly into a pooled buffer to avoid per-tick allocations.
+        var maxCount = _players.Count;
+        var pooled = PooledSendBuffer.Rent(1 + 4 + 4 + maxCount * ShipUpdatePacket.Size);
+        var buf = pooled.Buffer;
         int off = 0;
         buf[off++] = PacketType.PlayerStates;
         PacketWriter.WriteUInt32(buf, ref off, _elapsedMs);
-        PacketWriter.WriteUInt32(buf, ref off, (uint)count);
+
+        // Reserve count field; we fill with the actual serialized count below.
+        int countOffset = off;
+        off += 4;
+
+        int count = 0;
         foreach (var p in _players.Values)
+        {
+            // ConcurrentDictionary can change during enumeration; bound to reserved capacity.
+            if (count == maxCount) break;
             p.State.Write(buf, ref off);
+            count++;
+        }
+
+        int writeOff = countOffset;
+        PacketWriter.WriteUInt32(buf, ref writeOff, (uint)count);
+        pooled.SetLength(off);
 
         // Fire-and-forget latest-state fanout; stale sends are dropped per client.
-        BroadcastAllStates(buf);
+        BroadcastAllStates(pooled);
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -180,18 +195,66 @@ public class WsHub
                 await client.SendAsync(buf, ct);
     }
 
-    private void BroadcastAllStates(byte[] buf)
+    private void BroadcastAllStates(PooledSendBuffer buf)
     {
-        foreach (var (_, client) in _clients)
+        try
         {
-            // If a client is still sending a previous state frame, drop this one.
-            // State packets are transient, so latest-wins keeps latency stable.
-            client.TrySendLatest(buf);
+            foreach (var (_, client) in _clients)
+            {
+                // If a client is still sending a previous state frame, drop this one.
+                // State packets are transient, so latest-wins keeps latency stable.
+                client.TrySendLatest(buf);
+            }
+        }
+        finally
+        {
+            // Release hub ownership. Client sends hold their own refs.
+            buf.Release();
         }
     }
 }
 
 internal readonly record struct IncomingMessage(uint MPId, byte[] Buffer, int Length);
+
+internal sealed class PooledSendBuffer
+{
+    public byte[] Buffer { get; }
+    public int Length { get; private set; }
+
+    private int _refCount;
+
+    private PooledSendBuffer(byte[] buffer, int length)
+    {
+        Buffer = buffer;
+        Length = length;
+        _refCount = 1;
+    }
+
+    public static PooledSendBuffer Rent(int length)
+    {
+        var buffer = ArrayPool<byte>.Shared.Rent(length);
+        return new PooledSendBuffer(buffer, length);
+    }
+
+    public void SetLength(int length) => Length = length;
+
+    public bool TryAddRef()
+    {
+        while (true)
+        {
+            int current = Volatile.Read(ref _refCount);
+            if (current <= 0) return false;
+            if (Interlocked.CompareExchange(ref _refCount, current + 1, current) == current)
+                return true;
+        }
+    }
+
+    public void Release()
+    {
+        if (Interlocked.Decrement(ref _refCount) == 0)
+            ArrayPool<byte>.Shared.Return(Buffer);
+    }
+}
 
 /// <summary>
 /// Wraps a WebSocket with a send lock (WebSocket.SendAsync is not thread-safe).
@@ -217,27 +280,34 @@ internal sealed class ConnectedClient(uint mpId, WebSocket ws)
         }
     }
 
-    public bool TrySendLatest(byte[] buf)
+    public bool TrySendLatest(PooledSendBuffer buf)
     {
         if (_ws.State != WebSocketState.Open) return false;
         if (!_lock.Wait(0)) return false;
+
+        if (!buf.TryAddRef())
+        {
+            _lock.Release();
+            return false;
+        }
 
         _ = SendLatestWithHeldLockAsync(buf);
         return true;
     }
 
-    private async Task SendLatestWithHeldLockAsync(byte[] buf)
+    private async Task SendLatestWithHeldLockAsync(PooledSendBuffer buf)
     {
         try
         {
             if (_ws.State != WebSocketState.Open) return;
-            await _ws.SendAsync(buf, WebSocketMessageType.Binary, true, CancellationToken.None);
+            await _ws.SendAsync(buf.Buffer.AsMemory(0, buf.Length), WebSocketMessageType.Binary, true, CancellationToken.None);
         }
         catch (Exception)
         {
         }
         finally
         {
+            buf.Release();
             _lock.Release();
         }
     }
