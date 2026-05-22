@@ -104,6 +104,8 @@ export class GameRenderer {
   private hudLap       = 1
   private hudTotalLaps = 1
   private hudTimeMs    = 0
+  private hudTimeBucket100ms = -1
+  private hudTimeText = '00:00:0'
   private static readonly POINTER_MARGIN = 30
 
   async init(canvas: HTMLCanvasElement, skinId: string): Promise<void> {
@@ -821,24 +823,28 @@ export class GameRenderer {
 
     // ─── Debug text ────────────────────────────────────────────────────────
     const speed    = Math.sqrt(ship.vel.x ** 2 + ship.vel.y ** 2)
-    const accel    = dt > 0 ? (speed - this.prevSpeed) / dt : 0
-    const angDeg   = (ship.angle  * 180) / Math.PI
-    const omegaDeg = (ship.angVel * 180) / Math.PI
-    const alphaDeg = dt > 0 ? ((ship.angVel - this.prevAngVel) * 180) / Math.PI / dt : 0
+    // const accel    = dt > 0 ? (speed - this.prevSpeed) / dt : 0
+    // const angDeg   = (ship.angle  * 180) / Math.PI
+    // const omegaDeg = (ship.angVel * 180) / Math.PI
+    // const alphaDeg = dt > 0 ? ((ship.angVel - this.prevAngVel) * 180) / Math.PI / dt : 0
     this.prevSpeed  = speed
     this.prevAngVel = ship.angVel
-    this.debugText.text =
-      `pos: (${ship.pos.x.toFixed(1)}, ${ship.pos.y.toFixed(1)})  spd: ${speed.toFixed(1)} u/s  accel: ${accel.toFixed(1)} u/s²\n` +
-      `ang: ${angDeg.toFixed(0)}°  ω: ${omegaDeg.toFixed(1)}°/s  α: ${alphaDeg.toFixed(1)}°/s²`
+    // this.debugText.text =
+    //   `pos: (${ship.pos.x.toFixed(1)}, ${ship.pos.y.toFixed(1)})  spd: ${speed.toFixed(1)} u/s  accel: ${accel.toFixed(1)} u/s²\n` +
+    //   `ang: ${angDeg.toFixed(0)}°  ω: ${omegaDeg.toFixed(1)}°/s  α: ${alphaDeg.toFixed(1)}°/s²`
 
     // ─── Stats HUD (top-right) ────────────────────────────────────────────
-    const ms   = Math.max(0, this.hudTimeMs)
-    const mm   = Math.floor(ms / 60000)
-    const ss   = Math.floor((ms % 60000) / 1000)
-    const mmm  = Math.floor(ms % 1000)
-    const timeStr = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}:${String(mmm).padStart(3, '0')}`
+    const ms = Math.max(0, this.hudTimeMs)
+    const bucket100ms = Math.floor(ms / 100)
+    if (bucket100ms !== this.hudTimeBucket100ms) {
+      this.hudTimeBucket100ms = bucket100ms
+      const mm = Math.floor(bucket100ms / 600)
+      const ss = Math.floor((bucket100ms % 600) / 10)
+      const t  = bucket100ms % 10
+      this.hudTimeText = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}:${t}`
+    }
     const lapStr  = `${String(this.hudLap).padStart(2, '0')} / ${String(this.hudTotalLaps).padStart(2, '0')} Laps`
-    this.statsText.text   = `${timeStr}\n${speed.toFixed(0)} u/s\n${lapStr}`
+    this.statsText.text   = `${this.hudTimeText}\n${speed.toFixed(0)} u/s\n${lapStr}`
     this.statsText.position.set(W - 16, 16)
   }
 
