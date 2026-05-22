@@ -6,6 +6,7 @@ import {
   Assets,
   Text,
   TextStyle,
+  Graphics,
 } from 'pixi.js'
 import { PIXELS_PER_UNIT } from '../physics/ShipPhysics'
 import type { ShipState, InputState } from '../physics/ShipPhysics'
@@ -63,6 +64,12 @@ interface RemotePlayerView {
   lastInput:     InputState
 }
 
+interface OffscreenPointer {
+  container: Container
+  arrow: Graphics
+  label: Text
+}
+
 export class GameRenderer {
   app!: Application
   private worldContainer!: Container
@@ -89,10 +96,15 @@ export class GameRenderer {
   private debugText!: Text
   private statsText!: Text
   private countdownText!: Text
+  private pointerLayer!: Container
+  private checkpointPointer!: OffscreenPointer
+  private remotePointers: Map<number, OffscreenPointer> = new Map()
+  private nextCheckpointIdx = -1
   // ── HUD state fed by Game.ts ──────────────────────────────────────────────
   private hudLap       = 1
   private hudTotalLaps = 1
   private hudTimeMs    = 0
+  private static readonly POINTER_MARGIN = 30
 
   async init(canvas: HTMLCanvasElement, skinId: string): Promise<void> {
     this.app = new Application()
@@ -188,6 +200,137 @@ export class GameRenderer {
     this.countdownText.anchor.set(0.5)
     this.countdownText.visible = false
     this.app.stage.addChild(this.countdownText)
+
+    // ─── Offscreen pointers (screen-space HUD) ────────────────────────────
+    this.pointerLayer = new Container()
+    this.app.stage.addChild(this.pointerLayer)
+    this.checkpointPointer = this.createOffscreenPointer(0x44ff55)
+    this.checkpointPointer.container.visible = false
+    this.pointerLayer.addChild(this.checkpointPointer.container)
+  }
+
+  /** Create an offscreen pointer (arrow + distance label). */
+  private createOffscreenPointer(color: number): OffscreenPointer {
+    const container = new Container()
+    const arrow = new Graphics()
+      .moveTo(14, 0)
+      .lineTo(-8, -7)
+      .lineTo(-8, 7)
+      .closePath()
+      .fill({ color, alpha: 0.95 })
+      .stroke({ color: 0x001122, width: 2, alpha: 0.9 })
+
+    const label = new Text({
+      text: '',
+      style: new TextStyle({
+        fill: '#eaf6ff',
+        fontSize: 11,
+        fontFamily: 'monospace',
+        align: 'center',
+        dropShadow: { distance: 1, blur: 3, alpha: 0.85, angle: Math.PI / 4, color: '#000000' },
+      }),
+    })
+    label.anchor.set(0.5)
+
+    container.addChild(arrow)
+    container.addChild(label)
+
+    return { container, arrow, label }
+  }
+
+  /** Format pointer distance in world units. */
+  private formatDistance(units: number): string {
+    if (units < 10) return `${units.toFixed(1)}u`
+    return `${Math.round(units)}u`
+  }
+
+  /** Place distance label on the arrow backside (toward screen interior). */
+  private layoutPointerLabel(ptr: OffscreenPointer, angle: number): void {
+    const BACK_OFFSET = 20
+    ptr.label.position.set(-Math.cos(angle) * BACK_OFFSET, -Math.sin(angle) * BACK_OFFSET)
+  }
+
+  /** Convert worldContainer-local pixel coordinates to screen coordinates. */
+  private worldPxToScreen(x: number, y: number): { x: number; y: number } {
+    return {
+      x: this.worldContainer.position.x + x * this.worldContainer.scale.x,
+      y: this.worldContainer.position.y + y * this.worldContainer.scale.y,
+    }
+  }
+
+  /** True when target point is outside the safe screen rectangle. */
+  private isOffscreen(x: number, y: number, w: number, h: number): boolean {
+    const m = GameRenderer.POINTER_MARGIN
+    return x < m || x > w - m || y < m || y > h - m
+  }
+
+  /**
+   * Clamp a direction from screen center to the inset viewport edge.
+   * Returned angle faces the target direction (radians, +X = 0).
+   */
+  private edgePointerForTarget(targetX: number, targetY: number, w: number, h: number): { x: number; y: number; angle: number } {
+    const cx = w * 0.5
+    const cy = h * 0.5
+    const dx = targetX - cx
+    const dy = targetY - cy
+    const angle = Math.atan2(dy, dx)
+
+    const m = GameRenderer.POINTER_MARGIN
+    const halfW = Math.max(1, w * 0.5 - m)
+    const halfH = Math.max(1, h * 0.5 - m)
+    const tx = dx !== 0 ? halfW / Math.abs(dx) : Number.POSITIVE_INFINITY
+    const ty = dy !== 0 ? halfH / Math.abs(dy) : Number.POSITIVE_INFINITY
+    const t = Math.min(tx, ty)
+
+    return {
+      x: cx + dx * t,
+      y: cy + dy * t,
+      angle,
+    }
+  }
+
+  /** Update offscreen pointers for next checkpoint and remote players. */
+  private updateOffscreenPointers(w: number, h: number): void {
+    // Hide all pointers by default; turn visible only for offscreen entities.
+    this.checkpointPointer.container.visible = false
+    for (const p of this.remotePointers.values()) p.container.visible = false
+
+    // Next checkpoint pointer
+    if (this.nextCheckpointIdx >= 0 && this.nextCheckpointIdx < this.checkpointCircles.length) {
+      const cp = this.checkpointCircles[this.nextCheckpointIdx]
+      const screen = this.worldPxToScreen(cp.x, cp.y)
+      if (this.isOffscreen(screen.x, screen.y, w, h)) {
+        const p = this.edgePointerForTarget(screen.x, screen.y, w, h)
+        const distU = Math.hypot(cp.x - this.shipSprite.x, cp.y - this.shipSprite.y) / PIXELS_PER_UNIT
+        this.checkpointPointer.container.position.set(p.x, p.y)
+        this.checkpointPointer.arrow.rotation = p.angle
+        this.checkpointPointer.label.text = this.formatDistance(distU)
+        this.layoutPointerLabel(this.checkpointPointer, p.angle)
+        this.checkpointPointer.container.visible = true
+      }
+    }
+
+    // Remote player pointers
+    for (const [mpId, v] of this.remotePlayers) {
+      let ptr = this.remotePointers.get(mpId)
+      if (!ptr) {
+        ptr = this.createOffscreenPointer(0x66d8ff)
+        ptr.container.visible = false
+        this.remotePointers.set(mpId, ptr)
+        this.pointerLayer.addChild(ptr.container)
+      }
+
+      const screen = this.worldPxToScreen(v.shipSprite.x, v.shipSprite.y)
+      if (!this.isOffscreen(screen.x, screen.y, w, h)) continue
+
+      const p = this.edgePointerForTarget(screen.x, screen.y, w, h)
+      const distU = Math.hypot(v.shipSprite.x - this.shipSprite.x, v.shipSprite.y - this.shipSprite.y) / PIXELS_PER_UNIT
+      ptr.container.position.set(p.x, p.y)
+      ptr.arrow.rotation = p.angle
+      ptr.label.text = this.formatDistance(distU)
+      this.layoutPointerLabel(ptr, p.angle)
+      ptr.container.visible = true
+    }
   }
 
   /** Resize background to match window. Called on window resize. */
@@ -371,6 +514,8 @@ export class GameRenderer {
    * PastColor=red (already triggered), unvisited=white/dim.
    */
   setCheckpointState(nextOriginalIdx: number, passedSet: ReadonlySet<number>, lastPassedIdx: number): void {
+    this.nextCheckpointIdx = nextOriginalIdx
+
     const GREEN  = 0x44ff55   // next target
     const YELLOW = 0xffdd00   // most recently passed
     const RED    = 0xff4444   // previously passed
@@ -665,6 +810,9 @@ export class GameRenderer {
     // ─── Remote players ────────────────────────────────────────────────────
     this.renderRemotePlayers(this.serverTimeMs, dt)
 
+    // ─── Offscreen pointers (screen-space HUD) ────────────────────────────
+    this.updateOffscreenPointers(W, H)
+
     // ─── Prop particle FX ────────────────────────────────────────────────────
     this.propParticles.update(dt)
 
@@ -773,6 +921,13 @@ export class GameRenderer {
     this.worldContainer.removeChild(v.shieldSprite)
     this.app.stage.removeChild(v.nameLabel)
     this.remotePlayers.delete(mpId)
+
+    const ptr = this.remotePointers.get(mpId)
+    if (ptr) {
+      this.pointerLayer.removeChild(ptr.container)
+      ptr.container.destroy({ children: true })
+      this.remotePointers.delete(mpId)
+    }
   }
 
   // Maximum number of states held per remote player (~1.4 s at 22 Hz)
@@ -889,6 +1044,13 @@ export class GameRenderer {
       this.worldContainer.removeChild(v.shieldSprite)
       this.app.stage.removeChild(v.nameLabel)
     }
+    for (const p of this.remotePointers.values()) {
+      this.pointerLayer.removeChild(p.container)
+      p.container.destroy({ children: true })
+    }
+    this.remotePointers.clear()
+    this.pointerLayer.removeChild(this.checkpointPointer.container)
+    this.checkpointPointer.container.destroy({ children: true })
     this.remotePlayers.clear()
     this.app.destroy()
   }

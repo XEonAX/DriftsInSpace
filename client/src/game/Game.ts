@@ -47,6 +47,22 @@ export class Game {
   private trackCpCount  = 0     // checkpoints per lap
   private countdownSec  = 3.0   // counts down to 0; goes slightly negative for GO! display
   private _loopTimestamp = 0    // current rAF timestamp, available to helpers
+  private raceOriginState: ShipState = createShipState()
+
+  private onKeyDown = (ev: KeyboardEvent): void => {
+    if (ev.repeat || this.isEditableTarget(ev.target)) return
+
+    if (ev.code === 'Backspace') {
+      ev.preventDefault()
+      this.restartRace()
+      return
+    }
+
+    if (ev.code === 'Enter' || ev.code === 'NumpadEnter') {
+      ev.preventDefault()
+      this.teleportToLastCheckpoint()
+    }
+  }
 
   constructor(shipId: string, skinId: string, displayName: string) {
     this.shipId = shipId
@@ -98,6 +114,12 @@ export class Game {
     this.countdownSec   = 3.0
     this.trackLaps      = Math.max(1, level.Track.Laps)
     this.trackCpCount   = Math.max(1, level.Track.Checkpoints.length)
+    this.raceOriginState = {
+      pos: { x: this.shipState.pos.x, y: this.shipState.pos.y },
+      vel: { x: 0, y: 0 },
+      angle: this.shipState.angle,
+      angVel: 0,
+    }
 
     // Handle window resize
     window.addEventListener('resize', () => {
@@ -107,6 +129,7 @@ export class Game {
     })
 
     this.running = true
+    window.addEventListener('keydown', this.onKeyDown)
     this.lastTime = performance.now()
     this.rafId = requestAnimationFrame(this.countdownLoop)
 
@@ -118,7 +141,7 @@ export class Game {
     // Connect to multiplayer server (non-blocking — game works offline too)
     const userId = this.getOrCreateUserId()
     const wsUrl  = import.meta.env.VITE_WS_URL as string | undefined ?? 'ws://localhost:5839/ws'
-    this.net.connect(wsUrl, userId, this.displayName, this.shipId, {
+    this.net.connect(wsUrl, userId, this.displayName, this.skinId, {
       onGalaxy: async (data) => {
         for (const p of data.players) {
           await this.renderer.addRemotePlayer(p.mpId, p.displayName, p.skinId)
@@ -347,6 +370,67 @@ export class Game {
     this.renderer.setCheckpointState(nextOriginalIdx, this.passedCheckpoints, this.lastPassedIdx)
   }
 
+  private isEditableTarget(target: EventTarget | null): boolean {
+    const el = target as HTMLElement | null
+    if (!el) return false
+    const tag = el.tagName
+    return tag === 'INPUT' || tag === 'TEXTAREA' || (el as HTMLElement).isContentEditable
+  }
+
+  private checkpointByOriginalIdx(originalIdx: number): ObstacleTransform | null {
+    const hit = this.route.find((cp) => cp.originalIdx === originalIdx)
+    return hit?.transform ?? null
+  }
+
+  private teleportToCheckpoint(originalIdx: number): void {
+    const cp = this.checkpointByOriginalIdx(originalIdx)
+    if (!cp) return
+
+    this.shipState = {
+      pos: { x: cp.Position.x, y: cp.Position.y },
+      vel: { x: 0, y: 0 },
+      angle: this.shipState.angle,
+      angVel: 0,
+    }
+    this.prevShipState = this.shipState
+    this.accumulator = 0
+  }
+
+  private teleportToLastCheckpoint(): void {
+    if (this.route.length === 0) return
+    if (this.lastPassedIdx >= 0) {
+      this.teleportToCheckpoint(this.lastPassedIdx)
+      return
+    }
+    this.teleportToOrigin()
+  }
+
+  private teleportToOrigin(): void {
+    this.shipState = {
+      pos: { x: this.raceOriginState.pos.x, y: this.raceOriginState.pos.y },
+      vel: { x: 0, y: 0 },
+      angle: this.raceOriginState.angle,
+      angVel: 0,
+    }
+    this.prevShipState = this.shipState
+    this.accumulator = 0
+  }
+
+  private restartRace(): void {
+    if (this.route.length === 0) return
+
+    this.routeIdx = 0
+    this.raceFinished = false
+    this.passedCheckpoints = new Set<number>()
+    this.lastPassedIdx = -1
+    this.raceEndTime = 0
+    this.raceStartTime = this._loopTimestamp > 0 ? this._loopTimestamp : performance.now()
+    this.countdownSec = -1
+    this.renderer.setCountdown(-1)
+    this.renderer.setCheckpointState(this.route[0].originalIdx, this.passedCheckpoints, this.lastPassedIdx)
+    this.teleportToOrigin()
+  }
+
   /** Stable anonymous user ID, stored in localStorage. */
   private getOrCreateUserId(): string {
     const key = 'drifts_user_id'
@@ -361,6 +445,7 @@ export class Game {
   stop(): void {
     this.running = false
     cancelAnimationFrame(this.rafId)
+    window.removeEventListener('keydown', this.onKeyDown)
     this.input.destroy()
     this.net.disconnect()
     this.renderer.destroy()
