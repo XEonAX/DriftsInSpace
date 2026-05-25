@@ -696,8 +696,8 @@ export class GameRenderer {
   private smoothedZoom = 1.0
   private cameraReady  = false
   private lastRenderTime = 0
-  private prevSpeed  = 0
-  private prevAngVel = 0
+  // private prevSpeed  = 0
+  // private prevAngVel = 0
   /** Last server time received — used to interpolate remote players. */
   serverTimeMs = 0
 
@@ -848,8 +848,8 @@ export class GameRenderer {
     // const angDeg   = (ship.angle  * 180) / Math.PI
     // const omegaDeg = (ship.angVel * 180) / Math.PI
     // const alphaDeg = dt > 0 ? ((ship.angVel - this.prevAngVel) * 180) / Math.PI / dt : 0
-    this.prevSpeed  = speed
-    this.prevAngVel = ship.angVel
+    // this.prevSpeed  = speed
+    // this.prevAngVel = ship.angVel
     // this.debugText.text =
     //   `pos: (${ship.pos.x.toFixed(1)}, ${ship.pos.y.toFixed(1)})  spd: ${speed.toFixed(1)} u/s  accel: ${accel.toFixed(1)} u/s²\n` +
     //   `ang: ${angDeg.toFixed(0)}°  ω: ${omegaDeg.toFixed(1)}°/s  α: ${alphaDeg.toFixed(1)}°/s²`
