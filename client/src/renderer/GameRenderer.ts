@@ -106,6 +106,9 @@ export class GameRenderer {
   private hudTimeMs    = 0
   private hudTimeBucket100ms = -1
   private hudTimeText = '00:00:0'
+  private hudTrackName = ''
+  private hudPlayerName = ''
+  private topInfoText!: Text
   private static readonly POINTER_MARGIN = 30
 
   async init(canvas: HTMLCanvasElement, skinId: string): Promise<void> {
@@ -188,6 +191,18 @@ export class GameRenderer {
     this.statsText = new Text({ text: '', style: statsStyle })
     this.statsText.anchor.set(1, 0)
     this.app.stage.addChild(this.statsText)
+
+    // ─── Top center race header (track + player) ─────────────────────────
+    const topInfoStyle = new TextStyle({
+      fill: '#f5f8ff',
+      fontSize: 22,
+      fontFamily: 'monospace',
+      align: 'left',
+      dropShadow: { distance: 2, blur: 6, alpha: 0.9, angle: Math.PI / 4, color: '#000000' },
+    })
+    this.topInfoText = new Text({ text: '', style: topInfoStyle })
+    this.topInfoText.anchor.set(0, 0)
+    this.app.stage.addChild(this.topInfoText)
 
     // ─── Countdown overlay (centre screen) ────────────────────────────────
     const cdStyle = new TextStyle({
@@ -658,6 +673,12 @@ export class GameRenderer {
     this.lastInput = input
   }
 
+  /** Update top HUD header text (track + player). */
+  setTopHudInfo(trackName: string, playerName: string): void {
+    this.hudTrackName = trackName
+    this.hudPlayerName = playerName
+  }
+
   /**
    * Render one frame given the current physics state.
    * Called after physics has been stepped.
@@ -846,6 +867,15 @@ export class GameRenderer {
     const lapStr  = `${String(this.hudLap).padStart(2, '0')} / ${String(this.hudTotalLaps).padStart(2, '0')} Laps`
     this.statsText.text   = `${this.hudTimeText}\n${speed.toFixed(0)} u/s\n${lapStr}`
     this.statsText.position.set(W - 16, 16)
+
+    // ─── Top HUD (track + player) ────────────────────────────────────────
+    const track = this.hudTrackName.trim() || 'Unknown Track'
+    const player = this.hudPlayerName.trim() || 'Unknown Player'
+    const isMobile = W <= 768
+    this.topInfoText.text = isMobile
+      ? `${track}\n${player}`
+      : `${track}  |  ${player}`
+    this.topInfoText.position.set(16, 12)
   }
 
   // ─── Remote player management ─────────────────────────────────────────────

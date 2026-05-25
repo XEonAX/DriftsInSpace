@@ -10,7 +10,7 @@ import type { ObstacleCollider, ForceZone, PropState } from '../physics/Collisio
 import type { Prop } from '../data/levels'
 import { AudioManager } from '../audio/AudioManager'
 import type { CollisionMaterial } from '../audio/AudioManager'
-import { NetClient } from '../net/NetClient'
+import { NetClient, WS_URL } from '../net/NetClient'
 import { TouchOverlay } from '../input/TouchOverlay'
 
 export class Game {
@@ -94,6 +94,7 @@ export class Game {
     // Load the default level
     const level = await loadLevel(DEFAULT_LEVEL_ID)
     await this.renderer.loadLevel(level)
+    this.renderer.setTopHudInfo(level.LevelName, this.displayName)
     this.colliders = buildColliders(level.Obstacles)
     this.forceZones = buildForceZones(level.Obstacles)
     this.props = level.Props
@@ -140,8 +141,7 @@ export class Game {
 
     // Connect to multiplayer server (non-blocking — game works offline too)
     const userId = this.getOrCreateUserId()
-    const wsUrl  = import.meta.env.VITE_WS_URL as string | undefined ?? 'ws://localhost:5839/ws'
-    this.net.connect(wsUrl, userId, this.displayName, this.skinId, {
+    this.net.connect(WS_URL, userId, this.displayName, this.skinId, {
       onGalaxy: async (data) => {
         for (const p of data.players) {
           await this.renderer.addRemotePlayer(p.mpId, p.displayName, p.skinId)

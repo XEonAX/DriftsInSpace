@@ -7,4 +7,11 @@
         <RootNamespace>DriftsInSpaceServer</RootNamespace>
     </PropertyGroup>
 
+    <ItemGroup>
+        <None Include="DriftsInSpaceServer.service">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        </None>
+    </ItemGroup>
+
 </Project>

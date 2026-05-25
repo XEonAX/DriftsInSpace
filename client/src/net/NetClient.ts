@@ -5,6 +5,10 @@ import {
 } from './Packets'
 import type { GalaxyPacket, PlayerInitialState, PlayerStatesPacket } from './Packets'
 
+export const WS_URL = import.meta.env.PROD
+  ? 'wss://galacticdrifters.aeonax.com/ws'
+  : 'ws://localhost:5839/ws'
+
 export type { GalaxyPacket, PlayerInitialState, PlayerStatesPacket }
 
 export interface NetClientCallbacks {
